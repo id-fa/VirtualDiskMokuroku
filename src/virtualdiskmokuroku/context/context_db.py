@@ -171,6 +171,22 @@ class ContextDB:
     def get_thumb(self, entry_id: int) -> tuple[int, int, bytes] | None:
         return self._conn.execute("SELECT width, height, data FROM thumbs WHERE entry_id = ?", (entry_id,)).fetchone()
 
+    def get_image_size(self, entry_id: int) -> tuple[int, int] | None:
+        """元画像の解像度 (幅, 高さ)。サムネイル抽出時の値を優先し、無ければ EXIF 抽出時の値を使う。"""
+        found: dict[str, dict[str, int]] = {}
+        for kind, key, value in self._conn.execute(
+            "SELECT kind, key, value FROM ctx WHERE entry_id = ? AND key IN ('width', 'height')", (entry_id,)
+        ):
+            try:
+                found.setdefault(kind, {})[key] = int(value)
+            except ValueError:
+                continue
+        for kind in ("thumbnail", *found):
+            size = found.get(kind, {})
+            if "width" in size and "height" in size:
+                return size["width"], size["height"]
+        return None
+
     def get_inner(self, entry_id: int) -> list[InnerEntry]:
         cursor = self._conn.execute(
             "SELECT path, size, mtime, is_dir FROM inner_entries WHERE entry_id = ? ORDER BY rowid", (entry_id,)

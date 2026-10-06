@@ -88,6 +88,8 @@ class Extractor:
     default_params: dict = {}
     # 抽出結果の保存先 ("ctx" / "text" / "thumb" / "inner")。前回結果の引き継ぎで読むテーブルを決める
     stores: tuple[str, ...] = ("ctx",)
+    # 保存する内容を変えたら上げる。前回と違う場合は引き継がずに読み直す(パラメータ変更時と同じ扱い)
+    revision: int = 1
     # 必須の依存 (import 名) と、不足時に案内する pip パッケージ名
     required_modules: tuple[str, ...] = ()
     packages: str = ""

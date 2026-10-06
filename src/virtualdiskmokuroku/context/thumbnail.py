@@ -7,6 +7,9 @@ import io
 from .base import EntryWriter, Extractor
 from .exif import register_heif
 
+_EXIF_ORIENTATION = 0x0112
+_ROTATED_ORIENTATIONS = (5, 6, 7, 8)  # 縦横が入れ替わる向き
+
 
 class ThumbnailExtractor(Extractor):
     kind = "thumbnail"
@@ -18,6 +21,7 @@ class ThumbnailExtractor(Extractor):
         "extensions": ["jpg", "jpeg", "jpe", "png", "gif", "bmp", "webp", "tif", "tiff", "heic", "heif"],
     }
     stores = ("ctx", "thumb")
+    revision = 2  # 2: 元画像の解像度 (width / height) も保存する
     required_modules = ("PIL",)
     packages = "Pillow"
 
@@ -31,6 +35,13 @@ class ThumbnailExtractor(Extractor):
 
         register_heif()
         with Image.open(path) as image:
+            # 元画像の解像度。EXIF の回転指定があれば、サムネイルと同じく表示時の向きに合わせる
+            width, height = image.size
+            if image.getexif().get(_EXIF_ORIENTATION) in _ROTATED_ORIENTATIONS:
+                width, height = height, width
+            writer.add_meta("width", width)
+            writer.add_meta("height", height)
+
             # JPEG はデコード時に縮小して読み込みを速くする
             image.draft("RGB", (self._size, self._size))
             image = ImageOps.exif_transpose(image)

@@ -337,3 +337,102 @@ def test_limit_and_drive_management(window):
     window._after_catalog_changed()
     assert window.tree_model.rowCount() == 1
     assert wait_until(lambda: "only_in_two.txt" in names(window))
+
+
+def test_thumbnail_view_modes(window, tmp_path):
+    pytest.importorskip("virtualdiskmokuroku.context")
+    Image = pytest.importorskip("PIL.Image")
+    from PySide6.QtTest import QTest
+
+    from virtualdiskmokuroku.pipeline import scan_into_catalog
+    from virtualdiskmokuroku.ui.thumbnail_view import VIEW_DETAILS, VIEW_THUMB_LIST, VIEW_TILES
+
+    # サムネイルを持たないカタログでは選べず、設定されていても詳細表示のまま
+    wait_until(lambda: len(names(window)) == 7)
+    assert not window._mode_actions[VIEW_TILES].isEnabled()
+    window.set_view_mode(VIEW_TILES)
+    assert window.effective_view_mode() == VIEW_DETAILS and window._view() is window.table
+    window.set_view_mode(VIEW_DETAILS)
+
+    tree = tmp_path / "photos"
+    (tree / "album").mkdir(parents=True)
+    for number in range(12):
+        Image.new("RGB", (64, 32), (number * 20, 100, 200)).save(tree / f"img_{number:02}.png")
+    (tree / "note.txt").write_text("memo", encoding="utf-8")
+    catalog = window.catalog
+    catalog.settings["context"] = {"thumbnail": {"enabled": True, "size": 48}}
+    catalog.save()
+    window._close_databases()
+    outcome = scan_into_catalog(catalog, str(tree), name="写真", source=scanner.SOURCE_WALK)
+    window._after_catalog_changed(outcome.drive["id"])
+    assert wait_until(lambda: len(names(window)) == 14)
+    window.resize(1200, 700)
+
+    # --- 敷き詰め
+    assert window._mode_actions[VIEW_TILES].isEnabled()
+    window.set_view_mode(VIEW_TILES)
+    view = window.thumb_view
+    assert window._view() is view and window.view_stack.currentWidget() is view
+    assert AppSettings.load().view_mode == VIEW_TILES
+    delegate = view.thumb_delegate
+    assert (delegate.base_size, delegate.zoom, delegate.box_size) == (48, 1, 48)
+    model = window.table_model
+    wait_until(lambda: view.visualRect(model.index(13, 0)).isValid())
+    first, second = view.visualRect(model.index(0, 0)), view.visualRect(model.index(1, 0))
+    assert first.top() == second.top() and second.left() > first.left()  # 横に並ぶ
+    assert first.width() < 100
+
+    image_row = model.rows[names(window).index("img_03.png")]
+    info = window.thumb_provider.get(image_row)
+    assert info.pixmap is not None and (info.pixmap.width(), info.pixmap.height()) == (48, 24)
+    assert info.resolution == "64 x 32"
+    assert window.thumb_provider.get(model.rows[names(window).index("note.txt")]).pixmap is None
+    assert not view.grab().isNull()  # 描画でエラーにならない
+
+    # サムネイルの下の項目を減らすと低くなり、2 倍拡大で大きくなる
+    full_height = first.height()
+    window._caption_actions["size"].setChecked(False)
+    window._caption_actions["mtime"].setChecked(False)
+    assert delegate.captions == ("name", "resolution")
+    assert wait_until(lambda: view.visualRect(model.index(0, 0)).height() < full_height)
+    assert AppSettings.load().thumb_captions == ["name", "resolution"]
+    window.act_thumb_zoom.setChecked(True)
+    assert delegate.box_size == 96
+    assert wait_until(lambda: view.visualRect(model.index(0, 0)).width() > 96)
+    assert not view.grab().isNull()
+
+    # クリックで選択 → コピーやステータス表示は詳細表示と同じように働く
+    position = names(window).index("img_03.png")
+    wait_until(lambda: view.visualRect(model.index(position, 0)).isValid())
+    QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=view.visualRect(model.index(position, 0)).center())
+    assert [row.entry.name for row in window._selected_rows()] == ["img_03.png"]
+    window.copy_names()
+    assert QApplication.clipboard().text() == "img_03.png"
+    assert "1 個選択" in window.items_label.text()
+    assert window.properties._thumb.isVisible()
+
+    # --- 情報付き: 1 項目が横幅いっぱいになる
+    window.set_view_mode(VIEW_THUMB_LIST)
+    assert wait_until(lambda: view.visualRect(model.index(0, 0)).width() > view.viewport().width() * 0.8)
+    assert view.visualRect(model.index(1, 0)).top() > view.visualRect(model.index(0, 0)).top()
+    assert not view.grab().isNull()
+
+    # --- 詳細に戻すと、選択は行全体の選択として引き継がれる
+    window.set_view_mode(VIEW_DETAILS)
+    assert window._view() is window.table
+    selected = window.table.selectionModel().selectedRows()
+    assert [model.rows[index.row()].entry.name for index in selected] == ["img_03.png"]
+
+    # メニューからの並べ替え (同じ項目をもう一度選ぶと逆順)
+    window.set_view_mode(VIEW_TILES)
+    window.sort_by(0)
+    assert names(window)[:2] == ["album", "note.txt"]
+    window.sort_by(0)
+    assert names(window)[:2] == ["album", "img_00.png"]
+
+    # フォルダをダブルクリックすると、サムネイル表示のまま中へ移動する
+    window._on_table_double_clicked(model.index(0, 0))
+    assert wait_until(lambda: window.address.text().endswith("album"))
+    assert window._view() is view
+    window.act_thumb_zoom.setChecked(False)
+    window.set_view_mode(VIEW_DETAILS)

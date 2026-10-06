@@ -9,7 +9,15 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSettings, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QCloseEvent, QGuiApplication, QKeySequence, QStandardItem, QStandardItemModel
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QCloseEvent,
+    QGuiApplication,
+    QKeySequence,
+    QStandardItem,
+    QStandardItemModel,
+)
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -26,9 +34,11 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QSplitter,
+    QStackedWidget,
     QStyle,
     QTableView,
     QToolBar,
+    QToolButton,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -42,12 +52,21 @@ from ..core.errors import CatalogError, PasswordError
 from ..core.formatting import format_bytes, format_iso, format_size
 from ..core.search import SCOPE_ALL, SCOPE_FOLDER, SCOPE_SUBTREE, DbPool, DriveRef, QuerySpec, Row, iter_rows
 from ..core.settings import AppSettings
-from .models import COL_DRIVE, COL_LOCATION, COL_NAME, FileTableModel
+from .models import COL_DRIVE, COL_LOCATION, COL_MTIME, COL_NAME, COL_SIZE, COL_TYPE, FileTableModel
 from .properties_panel import PropertiesPanel
 from .query_worker import QueryWorker
 from .scan_dialog import ScanDialog
 from .settings_dialogs import AppSettingsDialog, CatalogSettingsDialog, ask_password
 from .style import apply_selection_style
+from .thumbnail_view import (
+    CAPTION_LABELS,
+    DEFAULT_THUMB_SIZE,
+    VIEW_DETAILS,
+    VIEW_THUMB_LIST,
+    VIEW_TILES,
+    ThumbnailProvider,
+    ThumbnailView,
+)
 
 APP_NAME = "VirtualDiskMokuroku"
 _CATALOG_FILTER = f"カタログ (*{CATALOG_EXTENSION})"
@@ -166,11 +185,33 @@ class MainWindow(QMainWindow):
 
         apply_selection_style(self.tree, self.table)
 
+        # --- サムネイル表示。詳細一覧と同じモデル・同じ選択状態を使う
+        self.thumb_provider = ThumbnailProvider(self._context_db)
+        self.thumb_view = ThumbnailView(self.thumb_provider, self._folder_icon, self._file_icon)
+        self.thumb_view.setModel(self.table_model)
+        own_selection = self.thumb_view.selectionModel()
+        self.thumb_view.setSelectionModel(self.table.selectionModel())
+        own_selection.deleteLater()
+        self.thumb_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.thumb_view.customContextMenuRequested.connect(self._show_table_menu)
+        self.thumb_view.doubleClicked.connect(self._on_table_double_clicked)
+
+        self.view_stack = QStackedWidget()
+        self.view_stack.addWidget(self.table)
+        self.view_stack.addWidget(self.thumb_view)
+        self._thumb_config: tuple | None = None
+        self._build_view_mode_menu()
+        self.view_button = QToolButton()
+        self.view_button.setText("表示形式")
+        self.view_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.view_button.setMenu(self.view_mode_menu)
+        filter_row.addWidget(self.view_button)
+
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(4, 4, 4, 0)
         right_layout.addLayout(filter_row)
-        right_layout.addWidget(self.table, 1)
+        right_layout.addWidget(self.view_stack, 1)
 
         self.splitter = QSplitter()
         self.splitter.addWidget(self.tree)
@@ -195,6 +236,45 @@ class MainWindow(QMainWindow):
         self.statusBar().addWidget(self.items_label, 1)
         self.statusBar().addPermanentWidget(self.drive_label)
 
+    def _build_view_mode_menu(self) -> None:
+        """表示形式 (詳細 / サムネイル 2 種) とサムネイル表示の設定メニュー。"""
+        settings = self.app_settings
+        self.view_mode_menu = QMenu("表示形式(&L)", self)
+        self._mode_actions: dict[str, QAction] = {}
+        group = QActionGroup(self)
+        group.setExclusive(True)
+        for mode, text in (
+            (VIEW_DETAILS, "詳細(&D)"),
+            (VIEW_TILES, "サムネイル (敷き詰め)(&T)"),
+            (VIEW_THUMB_LIST, "サムネイル (情報付き)(&I)"),
+        ):
+            item = self.view_mode_menu.addAction(text)
+            item.setCheckable(True)
+            group.addAction(item)
+            item.triggered.connect(lambda _checked=False, value=mode: self.set_view_mode(value))
+            self._mode_actions[mode] = item
+
+        self.view_mode_menu.addSeparator()
+        self.act_thumb_zoom = self.view_mode_menu.addAction("サムネイルを 2 倍に拡大(&2)")
+        self.act_thumb_zoom.setCheckable(True)
+        self.act_thumb_zoom.setChecked(settings.thumb_zoom)
+        self.act_thumb_zoom.toggled.connect(lambda _checked: self._on_thumb_option_changed())
+        self.caption_menu = self.view_mode_menu.addMenu("敷き詰め表示でサムネイルの下に出す項目(&C)")
+        self._caption_actions: dict[str, QAction] = {}
+        for key, label in CAPTION_LABELS.items():
+            item = self.caption_menu.addAction(label)
+            item.setCheckable(True)
+            item.setChecked(key in settings.thumb_captions)
+            item.toggled.connect(lambda _checked: self._on_thumb_option_changed())
+            self._caption_actions[key] = item
+
+        self.view_mode_menu.addSeparator()
+        sort_menu = self.view_mode_menu.addMenu("並べ替え(&S)")
+        for column, text in ((COL_NAME, "名前"), (COL_SIZE, "サイズ"), (COL_MTIME, "更新日時"), (COL_TYPE, "種類")):
+            item = sort_menu.addAction(text)
+            item.setToolTip("同じ項目をもう一度選ぶと昇順/降順が入れ替わります")
+            item.triggered.connect(lambda _checked=False, value=column: self.sort_by(value))
+
     def _build_actions(self) -> None:
         style = self.style()
 
@@ -214,7 +294,7 @@ class MainWindow(QMainWindow):
         self.act_export = action("表示中の一覧をエクスポート(&E)…", self.export_rows, "Ctrl+E")
         self.act_copy_names = action("名前をコピー(&C)", self.copy_names, QKeySequence.StandardKey.Copy)
         self.act_copy_paths = action("フルパスをコピー(&P)", self.copy_paths, "Ctrl+Shift+C")
-        self.act_select_all = action("すべて選択(&A)", self.table.selectAll, QKeySequence.StandardKey.SelectAll)
+        self.act_select_all = action("すべて選択(&A)", self._select_all, QKeySequence.StandardKey.SelectAll)
         self.act_open_location = action("場所を開く(&L)", self.open_location)
         self.act_find = action("フィルタにフォーカス(&F)", self._focus_filter, QKeySequence.StandardKey.Find)
         self.act_refresh = action("最新の情報に更新(&R)", self._run_query, "F5")
@@ -256,6 +336,7 @@ class MainWindow(QMainWindow):
         for item in (self.act_back, self.act_forward, self.act_up, self.act_refresh):
             view_menu.addAction(item)
         view_menu.addSeparator()
+        view_menu.addMenu(self.view_mode_menu)
         view_menu.addAction(self.properties_dock.toggleViewAction())
 
         drive_menu = menu.addMenu("ドライブ(&D)")
@@ -340,6 +421,90 @@ class MainWindow(QMainWindow):
         if self.catalog is not None:
             title = f"{self.catalog.path.name} - {title}"
         self.setWindowTitle(title)
+        self._apply_view_mode()
+
+    # ================================================================== 表示形式
+    def _view(self) -> QAbstractItemView:
+        """いま表示している一覧 (詳細の表、またはサムネイル表示)。"""
+        return self.thumb_view if self.view_stack.currentWidget() is self.thumb_view else self.table
+
+    def _thumbnails_available(self) -> bool:
+        """サムネイル表示を選べるカタログか(サムネイル保存が有効、または拡張コンテキストを持つドライブがある)。"""
+        if self.catalog is None:
+            return False
+        if self.catalog.settings.get("context", {}).get("thumbnail", {}).get("enabled"):
+            return True
+        return any(drive.get("has_context") for drive in self.catalog.drives)
+
+    def _thumb_base_size(self) -> int:
+        """収蔵サムネイルの長辺 (カタログ設定の値)。"""
+        size = DEFAULT_THUMB_SIZE
+        if self.catalog is not None:
+            try:
+                size = int(self.catalog.settings.get("context", {}).get("thumbnail", {}).get("size", size))
+            except (TypeError, ValueError):
+                pass
+        return min(512, max(32, size))
+
+    def effective_view_mode(self) -> str:
+        mode = self.app_settings.view_mode
+        if mode in (VIEW_TILES, VIEW_THUMB_LIST) and self._thumbnails_available():
+            return mode
+        return VIEW_DETAILS
+
+    def set_view_mode(self, mode: str) -> None:
+        self.app_settings.view_mode = mode
+        self.app_settings.save()
+        self._apply_view_mode()
+
+    def _on_thumb_option_changed(self) -> None:
+        self.app_settings.thumb_zoom = self.act_thumb_zoom.isChecked()
+        self.app_settings.thumb_captions = [key for key, item in self._caption_actions.items() if item.isChecked()]
+        self.app_settings.save()
+        self._apply_view_mode()
+
+    def _apply_view_mode(self) -> None:
+        """設定とカタログの状態に合わせて、一覧の表示形式を切り替える。"""
+        settings = self.app_settings
+        available = self._thumbnails_available()
+        mode = self.effective_view_mode()
+        for key, item in self._mode_actions.items():
+            item.setEnabled(key == VIEW_DETAILS or available)
+            item.setChecked(key == mode)
+        self.act_thumb_zoom.setEnabled(available)
+        self.caption_menu.setEnabled(available)
+
+        selection = self.table.selectionModel()
+        if mode == VIEW_DETAILS:
+            self._thumb_config = None
+            if self.view_stack.currentWidget() is not self.table:
+                # サムネイル表示で選んだ項目を、表では行全体の選択として見せる
+                selection.select(
+                    selection.selection(),
+                    QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows,
+                )
+                self.view_stack.setCurrentWidget(self.table)
+                self.table.scrollTo(self.table.currentIndex())
+            return
+
+        config = (mode, self._thumb_base_size(), 2 if settings.thumb_zoom else 1, tuple(settings.thumb_captions))
+        if config != self._thumb_config:
+            self._thumb_config = config
+            self.thumb_view.configure(*config)
+        if self.view_stack.currentWidget() is not self.thumb_view:
+            self.view_stack.setCurrentWidget(self.thumb_view)
+            self.thumb_view.scrollTo(self.thumb_view.currentIndex())
+
+    def sort_by(self, column: int) -> None:
+        """並べ替え (サムネイル表示には列見出しが無いのでメニューから行う)。同じ列なら昇順/降順を入れ替える。"""
+        header = self.table.horizontalHeader()
+        order = Qt.SortOrder.AscendingOrder
+        if header.sortIndicatorSection() == column and header.sortIndicatorOrder() == Qt.SortOrder.AscendingOrder:
+            order = Qt.SortOrder.DescendingOrder
+        self.table.sortByColumn(column, order)
+
+    def _select_all(self) -> None:
+        self._view().selectAll()
 
     # ================================================================== カタログの開閉
     def new_catalog(self) -> None:
@@ -465,6 +630,7 @@ class MainWindow(QMainWindow):
         self._dbs.clear()
         self._contexts.clear()
         self._refs.clear()
+        self.thumb_provider.clear()
 
     # ================================================================== ツリー
     def _drive_text(self, drive: dict) -> str:
@@ -705,8 +871,10 @@ class MainWindow(QMainWindow):
         searching = self._spec.effective_scope != SCOPE_FOLDER
         self.table.setColumnHidden(COL_LOCATION, not searching)
         self.table.setColumnHidden(COL_DRIVE, self._spec.effective_scope != SCOPE_ALL)
+        self.thumb_view.set_show_location(searching)
         self.table_model.set_rows(rows)
         self.table.scrollToTop()
+        self.thumb_view.scrollToTop()
         if self._pending_select is not None:
             position = self.table_model.find_row(*self._pending_select)
             self._pending_select = None
@@ -715,16 +883,24 @@ class MainWindow(QMainWindow):
                 self.table.selectionModel().setCurrentIndex(
                     index, QItemSelectionModel.SelectionFlag.ClearAndSelect | QItemSelectionModel.SelectionFlag.Rows
                 )
-                self.table.scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
+                self._view().scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
         if error:
             self.statusBar().showMessage(f"検索に失敗しました: {error}", 8000)
         self._on_selection_changed()
 
     # ================================================================== 選択・ステータス
+    def _selected_row_numbers(self) -> list[int]:
+        """選択されている行番号 (昇順)。表とサムネイル表示のどちらで選んでも同じ結果になる。"""
+        selection = self.table.selectionModel()
+        numbers = {index.row() for index in selection.selectedRows()}
+        if not numbers and selection.hasSelection():
+            # 行全体ではなく名前のセルだけが選択されている場合
+            numbers = {index.row() for index in selection.selectedIndexes()}
+        return sorted(numbers)
+
     def _selected_rows(self) -> list[Row]:
-        indexes = self.table.selectionModel().selectedRows()
-        rows = [self.table_model.row_at(index) for index in sorted(indexes, key=lambda index: index.row())]
-        return [row for row in rows if row is not None]
+        rows = self.table_model.rows
+        return [rows[number] for number in self._selected_row_numbers() if 0 <= number < len(rows)]
 
     def _on_selection_changed(self) -> None:
         current = self.table_model.row_at(self.table.currentIndex())
@@ -756,9 +932,9 @@ class MainWindow(QMainWindow):
             text += f"   ファイル合計 {format_size(sum(row.entry.size or 0 for row in rows if not row.entry.is_dir))}"
         if self._truncated:
             text += f"   ※ 上限の {len(rows):,} 件まで表示 (エクスポートは全件)"
-        selected = self.table.selectionModel().selectedRows()
+        selected = self._selected_rows()
         if selected:
-            size = sum((row.entry.size or 0) for row in self._selected_rows())
+            size = sum((row.entry.size or 0) for row in selected)
             text += f"   |   {len(selected):,} 個選択  {format_size(size)} ({format_bytes(size)} バイト)"
         self.items_label.setText(text)
 
@@ -788,7 +964,7 @@ class MainWindow(QMainWindow):
 
     def _build_table_menu(self) -> QMenu:
         menu = QMenu(self)
-        has_selection = bool(self.table.selectionModel().selectedRows())
+        has_selection = self.table.selectionModel().hasSelection()
         for item in (self.act_copy_names, self.act_copy_paths):
             item.setEnabled(has_selection)
             menu.addAction(item)
@@ -809,7 +985,7 @@ class MainWindow(QMainWindow):
         return menu
 
     def _show_table_menu(self, position) -> None:
-        self._build_table_menu().exec(self.table.viewport().mapToGlobal(position))
+        self._build_table_menu().exec(self._view().viewport().mapToGlobal(position))
         for item in (self.act_copy_names, self.act_copy_paths):
             item.setEnabled(True)
 
@@ -853,7 +1029,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, APP_NAME, f"エクスプローラで開けません。\n\n{folder}\n\n{error}")
 
     def copy_names(self) -> None:
-        if not self.table.hasFocus() and QApplication.focusWidget() not in (None, self.table):
+        view = self._view()
+        if not view.hasFocus() and QApplication.focusWidget() not in (None, view):
             widget = QApplication.focusWidget()
             if hasattr(widget, "copy"):
                 widget.copy()  # type: ignore[union-attr]

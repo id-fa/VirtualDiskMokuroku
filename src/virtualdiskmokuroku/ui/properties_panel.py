@@ -166,7 +166,8 @@ class PropertiesPanel(QScrollArea):
                 self._thumb.setPixmap(pixmap)
                 self._thumb.setVisible(True)
 
-        meta = context_db.get_meta(entry_id)
+        # 同じ項目が複数の種別から入ることがある (幅・高さは EXIF とサムネイルの両方が保存する) ので 1 つにまとめる
+        meta = list({(key, value): (kind, key, value) for kind, key, value in context_db.get_meta(entry_id)}.values())
         if meta:
             self._meta.setRowCount(len(meta))
             for index, (kind, key, value) in enumerate(meta):

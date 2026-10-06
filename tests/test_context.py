@@ -494,3 +494,43 @@ def test_iso_listing(tmp_path):
     IsoExtractor().extract(str(plain), writer)
     assert dict(writer.meta)["iso_filesystem"] == "ISO 9660"
     assert [(row[0], row[1]) for row in writer.inner] == [("FOO.TXT", 3)]
+
+
+def test_thumbnail_stores_original_resolution(built, tmp_path):
+    import sqlite3
+
+    from virtualdiskmokuroku.context.thumbnail import ThumbnailExtractor
+
+    tree, files_db, context_db, _stats, _events = built
+    pic = entry_id(files_db, "sub\\pic.png")
+    with ContextDB(context_db) as ctx:
+        assert ctx.get_image_size(pic) == (64, 32)
+        assert ("thumbnail", "width", "64") in ctx.get_meta(pic)
+        assert ctx.get_image_size(entry_id(files_db, "notes_utf8.txt")) is None
+
+    # EXIF の回転指定がある画像は、サムネイルと同じく表示時の向きで保存する
+    rotated = tmp_path / "rotated.jpg"
+    exif = Image.Exif()
+    exif[0x0112] = 6
+    Image.new("RGB", (40, 20), "red").save(rotated, exif=exif)
+    writer = EntryWriter(1, "thumbnail")
+    ThumbnailExtractor().extract(str(rotated), writer)
+    assert dict(writer.meta) == {"width": "20", "height": "40"}
+    assert writer.thumb[:2] == (20, 40)
+
+    # 解像度を保存していなかった旧版の結果は引き継がず、サムネイルだけ読み直す
+    old_db = tmp_path / "old_context.db"
+    shutil.copyfile(context_db, old_db)
+    conn = sqlite3.connect(old_db)
+    conn.execute("DELETE FROM meta WHERE key = 'revision:thumbnail'")
+    conn.execute("DELETE FROM ctx WHERE kind = 'thumbnail'")
+    conn.commit()
+    conn.close()
+    with ContextDB(old_db) as ctx:
+        assert ctx.get_image_size(pic) is None and ctx.get_thumb(pic) is not None
+    new_db = tmp_path / "new_context.db"
+    stats = build_context_db(files_db, new_db, str(tree), all_enabled(), previous=(files_db, old_db))
+    assert stats.processed == 3  # photo.jpg, pic.png, broken.jpg
+    with ContextDB(new_db) as ctx:
+        assert ctx.get_image_size(pic) == (64, 32)
+        assert ctx.get_text(entry_id(files_db, "notes_utf8.txt")) is not None  # 他の種別は引き継がれている

@@ -87,7 +87,11 @@ class _Previous:
         except (sqlite3.Error, ValueError):
             meta = {}
         # 抽出器のパラメータが前回と同じ種別だけ引き継げる
-        self.kinds = {ex.kind for ex in extractors if meta.get(f"params:{ex.kind}") == ex.params}
+        self.kinds = {
+            ex.kind
+            for ex in extractors
+            if meta.get(f"params:{ex.kind}") == ex.params and meta.get(f"revision:{ex.kind}", 1) == ex.revision
+        }
 
     def close(self) -> None:
         self.files.close()
@@ -244,6 +248,7 @@ def _build(files_db_path, context_db_path, scan_root, settings, previous, progre
                     progress("context", index)
 
             meta: dict = {f"params:{extractor.kind}": extractor.params for extractor in extractors}
+            meta.update({f"revision:{extractor.kind}": extractor.revision for extractor in extractors})
             meta.update(
                 created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 scan_root=root,
