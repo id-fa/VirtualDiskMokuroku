@@ -23,6 +23,7 @@ class AppSettings:
     es_path: str = ""  # 空なら自動検出
     es_instance: str = ""  # Everything のインスタンス名 (1.5 アルファ版の既定は "1.5a")
     result_limit: int = 100000  # フィルタ/検索結果の表示上限
+    memory_limit_mb: int = 512  # 暗号化カタログの DB をメモリ上で開く上限。超える分だけ一時フォルダに復号する
     recent_catalogs: list[str] = field(default_factory=list)
     view_mode: str = "details"  # 一覧の表示形式: details / tiles / thumb_list
     thumb_zoom: bool = False  # サムネイルを 2 倍に拡大して並べる

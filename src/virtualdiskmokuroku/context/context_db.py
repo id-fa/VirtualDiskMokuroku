@@ -9,10 +9,10 @@ import json
 import os
 import sqlite3
 from collections.abc import Sequence
-from pathlib import Path
 from typing import NamedTuple
 
-from ..core.drive_db import like_pattern
+from ..core.drive_db import like_pattern, readonly_uri
+from ..core.workdb import keep_temp_in_memory
 from .base import EntryWriter
 
 SCHEMA_VERSION = 1
@@ -57,13 +57,9 @@ class InnerEntry(NamedTuple):
 # --------------------------------------------------------------------------------------
 
 
-def create_context_db(path: str | os.PathLike[str]) -> sqlite3.Connection:
-    """空の context.db を作り、書き込み用の接続を返す。索引は ``finish_context_db`` で張る。"""
-    conn = sqlite3.connect(str(path), isolation_level=None)
-    conn.execute("PRAGMA journal_mode=OFF")
-    conn.execute("PRAGMA synchronous=OFF")
+def init_context_db(conn: sqlite3.Connection) -> None:
+    """空の DB に context.db のテーブルを作る。索引は ``finish_context_db`` で張る。"""
     conn.executescript(_SCHEMA)
-    return conn
 
 
 def finish_context_db(conn: sqlite3.Connection, meta: dict) -> None:
@@ -121,13 +117,14 @@ def load_result(conn: sqlite3.Connection, entry_id: int, kind: str, stores: Sequ
 class ContextDB:
     """読み取り専用で開いた context.db。接続はスレッド間で共有せず、別スレッドでは ``clone()`` を使う。"""
 
-    def __init__(self, path: str | os.PathLike[str]):
-        self.path = Path(path)
-        self._conn = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False)
+    def __init__(self, source: str | os.PathLike[str]):
+        self.source = source  # ファイルのパス、または ``file:`` で始まる SQLite の URI
+        self._conn = sqlite3.connect(readonly_uri(source), uri=True, check_same_thread=False)
+        keep_temp_in_memory(self._conn)  # 検索の中間結果などが SQLite の一時ファイルに出ないようにする
         self._meta: dict | None = None
 
     def clone(self) -> ContextDB:
-        return ContextDB(self.path)
+        return ContextDB(self.source)
 
     def close(self) -> None:
         self._conn.close()
@@ -225,13 +222,15 @@ class ContextDB:
         return [row[0] for row in self._conn.execute(sql, params)]
 
 
-def redecode_text(context_db_path: str | os.PathLike[str], entry_id: int, encoding: str) -> str:
+def redecode_text(target: str | os.PathLike[str] | sqlite3.Connection, entry_id: int, encoding: str) -> str:
     """保存済みの生データを指定の文字コードでデコードし直して保存する(ドライブ未接続でも実行できる)。
 
+    ``target`` は context.db のパス、または書き込みできる接続(メモリ上に読み込んだ DB など。閉じずに返す)。
     不明な文字コード名は ``LookupError``、対象のテキストが無い場合は ``KeyError``。
     """
     b"".decode(encoding)  # 文字コード名の検証
-    conn = sqlite3.connect(str(context_db_path))
+    own_connection = not isinstance(target, sqlite3.Connection)
+    conn = sqlite3.connect(str(target)) if own_connection else target
     try:
         row = conn.execute("SELECT raw FROM text_content WHERE entry_id = ?", (entry_id,)).fetchone()
         if row is None or row[0] is None:
@@ -240,5 +239,6 @@ def redecode_text(context_db_path: str | os.PathLike[str], entry_id: int, encodi
         with conn:
             conn.execute("UPDATE text_content SET encoding = ?, content = ? WHERE entry_id = ?", (encoding, content, entry_id))
     finally:
-        conn.close()
+        if own_connection:
+            conn.close()
     return content

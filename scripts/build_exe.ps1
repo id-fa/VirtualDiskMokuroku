@@ -19,8 +19,8 @@ $arguments = @(
     "--workpath", (Join-Path $root "build"),
     "--specpath", (Join-Path $root "build")
 )
-# 拡張コンテキスト用の任意ライブラリは、導入されているものだけ取り込む
-foreach ($module in "PIL", "tinytag", "charset_normalizer", "olefile", "py7zr", "rarfile", "pycdlib") {
+# 暗号化と拡張コンテキスト用のライブラリは、導入されているものだけ取り込む
+foreach ($module in "cryptography", "PIL", "tinytag", "charset_normalizer", "olefile", "py7zr", "rarfile", "pycdlib") {
     if ($Exclude -contains $module) {
         $arguments += @("--exclude-module", $module)
         continue

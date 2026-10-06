@@ -19,8 +19,8 @@ SCOPE_ALL = "all"  # カタログ内の全ドライブ
 class DriveRef:
     drive_id: str
     name: str
-    files_db: Path
-    context_db: Path | None = None
+    files_db: Path | str  # ファイルのパス、または SQLite の URI (暗号化カタログのメモリ上の DB)
+    context_db: Path | str | None = None
 
 
 @dataclass(frozen=True)
@@ -53,16 +53,16 @@ class DbPool:
     """スレッド専用の DB 接続プール。``interrupt_all`` だけは他スレッドから呼んでよい。"""
 
     def __init__(self) -> None:
-        self._files: dict[Path, DriveDB] = {}
-        self._contexts: dict[Path, object] = {}
+        self._files: dict[Path | str, DriveDB] = {}
+        self._contexts: dict[Path | str, object] = {}
 
-    def files(self, path: Path) -> DriveDB:
+    def files(self, path: Path | str) -> DriveDB:
         db = self._files.get(path)
         if db is None:
             db = self._files[path] = DriveDB(path)
         return db
 
-    def context(self, path: Path):
+    def context(self, path: Path | str):
         from ..context.context_db import ContextDB
 
         db = self._contexts.get(path)

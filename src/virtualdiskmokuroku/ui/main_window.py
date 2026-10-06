@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sqlite3
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -46,7 +47,7 @@ from PySide6.QtWidgets import (
 
 from .. import __version__
 from ..core import export
-from ..core.catalog import CATALOG_EXTENSION, LEGACY_CATALOG_EXTENSIONS, Catalog
+from ..core.catalog import CATALOG_EXTENSION, CONTEXT_DB, LEGACY_CATALOG_EXTENSIONS, Catalog
 from ..core.drive_db import ROOT_ID, DriveDB, split_terms
 from ..core.errors import CatalogError, PasswordError
 from ..core.formatting import format_bytes, format_iso, format_size
@@ -56,7 +57,7 @@ from .models import COL_DRIVE, COL_LOCATION, COL_MTIME, COL_NAME, COL_SIZE, COL_
 from .properties_panel import PropertiesPanel
 from .query_worker import QueryWorker
 from .scan_dialog import ScanDialog
-from .settings_dialogs import AppSettingsDialog, CatalogSettingsDialog, ask_password
+from .settings_dialogs import AppSettingsDialog, CatalogSettingsDialog, ask_new_password, ask_password
 from .style import apply_selection_style
 from .thumbnail_view import (
     CAPTION_LABELS,
@@ -292,6 +293,7 @@ class MainWindow(QMainWindow):
         self.act_close = action("カタログを閉じる(&C)", self.close_catalog)
         self.act_exit = action("終了(&X)", self.close)
         self.act_export = action("表示中の一覧をエクスポート(&E)…", self.export_rows, "Ctrl+E")
+        self.act_export_decrypted = action("復号して別のカタログに書き出す(&D)…", self.export_decrypted)
         self.act_copy_names = action("名前をコピー(&C)", self.copy_names, QKeySequence.StandardKey.Copy)
         self.act_copy_paths = action("フルパスをコピー(&P)", self.copy_paths, "Ctrl+Shift+C")
         self.act_select_all = action("すべて選択(&A)", self._select_all, QKeySequence.StandardKey.SelectAll)
@@ -325,6 +327,7 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.act_close)
         file_menu.addSeparator()
         file_menu.addAction(self.act_export)
+        file_menu.addAction(self.act_export_decrypted)
         file_menu.addSeparator()
         file_menu.addAction(self.act_exit)
 
@@ -400,6 +403,8 @@ class MainWindow(QMainWindow):
         self._thread.wait(3000)
         self._close_databases()
         self._worker.close_all()
+        if self.catalog is not None:
+            self.catalog.release_sources()
         super().closeEvent(event)
 
     def _update_ui_state(self) -> None:
@@ -417,8 +422,11 @@ class MainWindow(QMainWindow):
         self.act_back.setEnabled(self._history_index > 0)
         self.act_forward.setEnabled(self._history_index < len(self._history) - 1)
         self.act_up.setEnabled(has_drive and self._location[1] != ROOT_ID)  # type: ignore[index]
+        self.act_export_decrypted.setEnabled(has_catalog and self.catalog.encrypted)  # type: ignore[union-attr]
         title = f"{APP_NAME} {__version__}"
-        if self.catalog is not None:
+        if self.catalog is not None and self.catalog.encrypted:
+            title = f"{self.catalog.path.name} [暗号化] - {title}"
+        elif self.catalog is not None:
             title = f"{self.catalog.path.name} - {title}"
         self.setWindowTitle(title)
         self._apply_view_mode()
@@ -513,15 +521,36 @@ class MainWindow(QMainWindow):
             return
         if not path.lower().endswith(CATALOG_EXTENSION):
             path += CATALOG_EXTENSION
+        password = None
+        answer = QMessageBox.question(
+            self, APP_NAME,
+            "このカタログを暗号化しますか?\n\n"
+            "暗号化すると、カタログの中身 (ファイル名・サムネイルなど) はパスワードが無いと読めなくなります。\n"
+            "パスワードを忘れると開けなくなり、復旧する方法はありません。暗号化は後から設定・解除できます。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.No,
+        )  # fmt: skip
+        if answer == QMessageBox.StandardButton.Cancel:
+            return
+        if answer == QMessageBox.StandardButton.Yes:
+            password = ask_new_password(self, "暗号化のパスワード")
+            if password is None:
+                return
         try:
             if os.path.exists(path):
                 os.remove(path)  # 上書きはファイルダイアログで確認済み
-            catalog = Catalog.create(path)
+            with wait_cursor():
+                catalog = Catalog.create(path, password, encrypt=password is not None)
         except (CatalogError, OSError) as error:
             QMessageBox.critical(self, APP_NAME, f"カタログを作成できません。\n\n{error}")
             return
         self._set_catalog(catalog)
-        answer = QMessageBox.question(self, APP_NAME, "カタログを作成しました。続けてドライブを追加しますか?")
+        answer = QMessageBox.question(
+            self, APP_NAME,
+            "カタログを作成しました。続けてドライブを追加しますか?\n\n"
+            "拡張コンテキスト (サムネイルやテキスト内容など) を登録する場合は、ドライブを追加する前に"
+            "「設定」→「カタログ設定」で有効にしてください。",
+        )  # fmt: skip
         if answer == QMessageBox.StandardButton.Yes:
             self.scan_drive()
 
@@ -554,6 +583,8 @@ class MainWindow(QMainWindow):
     def _set_catalog(self, catalog: Catalog | None) -> None:
         self._close_databases()
         self.catalog = catalog
+        if catalog is not None:
+            catalog.memory_limit = self.app_settings.memory_limit_mb * 1024 * 1024
         self._location = None
         self._history.clear()
         self._history_index = -1
@@ -591,8 +622,9 @@ class MainWindow(QMainWindow):
             assert self.catalog is not None
             drive = self.catalog.drive(drive_id)
             with wait_cursor():
-                files_db = self.catalog.extract_db(drive_id)
-                context_db = self.catalog.extract_context_db(drive_id) if drive.get("has_context") else None
+                # 通常のカタログはキャッシュに展開したファイル、暗号化カタログはメモリ上の DB を指す URI
+                files_db = self.catalog.db_source(drive_id)
+                context_db = self.catalog.context_source(drive_id) if drive.get("has_context") else None
             ref = self._refs[drive_id] = DriveRef(drive_id, drive["name"], files_db, context_db)
         return ref
 
@@ -631,6 +663,8 @@ class MainWindow(QMainWindow):
         self._contexts.clear()
         self._refs.clear()
         self.thumb_provider.clear()
+        if self.catalog is not None:
+            self.catalog.release_sources()  # 暗号化カタログの復号済み DB (メモリ・一時フォルダ) を手放す
 
     # ================================================================== ツリー
     def _drive_text(self, drive: dict) -> str:
@@ -651,7 +685,13 @@ class MainWindow(QMainWindow):
         return "\n".join(lines)
 
     def _reload_tree(self) -> None:
-        self.tree_model.clear()
+        # 作り直しの途中で、消える前の項目が「選択中」として通知されないようにする
+        selection = self.tree.selectionModel()
+        selection.blockSignals(True)
+        try:
+            self.tree_model.clear()
+        finally:
+            selection.blockSignals(False)
         if self.catalog is None:
             return
         for drive in self.catalog.drives:
@@ -696,9 +736,12 @@ class MainWindow(QMainWindow):
 
     def _on_tree_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         item = self.tree_model.itemFromIndex(current)
-        if item is None or item.data(ROLE_DRIVE) is None:
+        if item is None or item.data(ROLE_DRIVE) is None or self.catalog is None:
             return
-        self.navigate(item.data(ROLE_DRIVE), item.data(ROLE_DIR), from_tree=True)
+        drive_id = item.data(ROLE_DRIVE)
+        if not any(drive["id"] == drive_id for drive in self.catalog.drives):
+            return  # 閉じたカタログや削除したドライブの項目
+        self.navigate(drive_id, item.data(ROLE_DIR), from_tree=True)
 
     def _drive_item(self, drive_id: str) -> QStandardItem | None:
         for row in range(self.tree_model.rowCount()):
@@ -1078,20 +1121,32 @@ class MainWindow(QMainWindow):
     def _redecode_text(self, drive_id: str, entry_id: int, encoding: str) -> None:
         if self.catalog is None or not encoding:
             return
-        ref = self._ref(drive_id)
-        if ref.context_db is None:
+        if self._ref(drive_id).context_db is None:
             return
-        work_dir = Path(tempfile.mkdtemp(prefix="vdmoku_ctx_"))
+        encrypted = self.catalog.encrypted
+        work_dir = None if encrypted else Path(tempfile.mkdtemp(prefix="vdmoku_ctx_"))
         try:
             from ..context.context_db import redecode_text
 
             with wait_cursor():
-                copy_path = work_dir / "context.db"
-                shutil.copyfile(ref.context_db, copy_path)
-                redecode_text(copy_path, entry_id, encoding)
+                updated: bytes | Path
+                if work_dir is None:
+                    # 暗号化カタログ: 平文をディスクに書かないよう、メモリ上で書き換える
+                    conn = sqlite3.connect(":memory:")
+                    try:
+                        conn.execute("PRAGMA temp_store=MEMORY")
+                        conn.deserialize(self.catalog.read_db_bytes(drive_id, CONTEXT_DB))
+                        redecode_text(conn, entry_id, encoding)
+                        updated = conn.serialize()
+                    finally:
+                        conn.close()
+                else:
+                    updated = work_dir / "context.db"
+                    shutil.copyfile(self.catalog.extract_db(drive_id, CONTEXT_DB), updated)
+                    redecode_text(updated, entry_id, encoding)
                 location, selected = self._location, self.table_model.row_at(self.table.currentIndex())
                 self._close_databases()
-                self.catalog.replace_context_db(drive_id, copy_path)
+                self.catalog.replace_context_db(drive_id, updated)
         except (LookupError, UnicodeError, ValueError) as error:
             QMessageBox.warning(self, APP_NAME, f"文字コード「{encoding}」で読み直せません。\n\n{error}")
             return
@@ -1099,7 +1154,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, APP_NAME, f"カタログを更新できません。\n\n{error}")
             return
         finally:
-            shutil.rmtree(work_dir, ignore_errors=True)
+            if work_dir is not None:
+                shutil.rmtree(work_dir, ignore_errors=True)
         if location is not None:
             self._pending_select = (drive_id, selected.entry.id) if selected else None
             self._run_query()
@@ -1252,11 +1308,42 @@ class MainWindow(QMainWindow):
     def edit_catalog_settings(self) -> None:
         if self.catalog is None:
             return
-        CatalogSettingsDialog(self.catalog, self).exec()
+        dialog = CatalogSettingsDialog(self.catalog, self, prepare_rewrite=self._close_databases)
+        dialog.exec()
+        # 保存や暗号化の切り替えの前に DB を閉じている。ツリーや現在位置はそのまま使えるので、一覧だけ読み直す
         self._update_ui_state()
+        self._update_status()
+        if self._location is not None:
+            self._run_query()
+
+    def export_decrypted(self) -> None:
+        """暗号化カタログの内容を、暗号化しないカタログとして別のファイルに書き出す。"""
+        if self.catalog is None or not self.catalog.encrypted:
+            return
+        answer = QMessageBox.warning(
+            self, APP_NAME,
+            "暗号化していないカタログとして書き出します。書き出したファイルの中身は誰でも読めます。続けますか?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+        )  # fmt: skip
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        path, _filter = QFileDialog.getSaveFileName(self, "復号して書き出す", "", _CATALOG_FILTER)
+        if not path:
+            return
+        if not path.lower().endswith(CATALOG_EXTENSION):
+            path += CATALOG_EXTENSION
+        try:
+            with wait_cursor():
+                self.catalog.export_decrypted(path)
+        except (CatalogError, OSError) as error:
+            QMessageBox.critical(self, APP_NAME, f"書き出しに失敗しました。\n\n{error}")
+            return
+        self.statusBar().showMessage(f"{path} に書き出しました", 8000)
 
     def edit_app_settings(self) -> None:
         if AppSettingsDialog(self.app_settings, self).exec():
+            if self.catalog is not None:
+                self.catalog.memory_limit = self.app_settings.memory_limit_mb * 1024 * 1024
             self._run_query()
 
     def show_everything_help(self) -> None:

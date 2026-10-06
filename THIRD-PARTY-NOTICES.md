@@ -50,6 +50,7 @@ GPL のライブラリは同梱していません (`licenses/GPL-3.0.txt` は LG
 | ソフトウェア | ライセンス |
 |---|---|
 | Python 3 ランタイムと標準ライブラリ | PSF-2.0 |
+| cryptography (カタログの暗号化。OpenSSL を含む) | Apache-2.0 OR BSD-3-Clause (OpenSSL は Apache-2.0) |
 | PyInstaller ブートローダ | GPL-2.0-or-later (ビルドした実行ファイルを任意のライセンスで配布できる例外条項付き) |
 | NumPy | BSD-3-Clause |
 | PyYAML, setuptools, cffi | MIT |

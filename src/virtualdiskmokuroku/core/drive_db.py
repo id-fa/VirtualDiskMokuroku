@@ -18,6 +18,7 @@ from typing import NamedTuple
 from .errors import ScanCancelled
 from .es_client import FILE_ATTRIBUTE_DIRECTORY, RawEntry
 from .ignore import IgnoreRules
+from .workdb import WorkDb, keep_temp_in_memory, remove_quietly
 
 SCHEMA_VERSION = 1
 ROOT_ID = 0
@@ -84,20 +85,6 @@ class _OpenDir:
         self.dirs = 0
 
 
-def _remove_quietly(path: str | os.PathLike[str]) -> None:
-    try:
-        os.remove(path)
-    except OSError:
-        pass
-
-
-def _fast_connection(path: str | os.PathLike[str]) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path), isolation_level=None)
-    conn.execute("PRAGMA journal_mode=OFF")
-    conn.execute("PRAGMA synchronous=OFF")
-    return conn
-
-
 def build_drive_db(
     db_path: str | os.PathLike[str],
     root: str,
@@ -112,18 +99,49 @@ def build_drive_db(
     db_path = Path(db_path)
     stage_path = db_path.with_name(db_path.name + ".stage")
     for path in (db_path, stage_path):
-        _remove_quietly(path)
+        remove_quietly(path)
+    out = WorkDb(db_path)
+    stage = WorkDb(stage_path)
     try:
-        stats = _build(db_path, stage_path, root, entries, ignore, meta or {}, progress, is_cancelled)
+        stats = _build(out, stage, root, entries, ignore, meta or {}, progress, is_cancelled)
+        out.finish()
     except BaseException:
-        _remove_quietly(db_path)
+        out.discard()
         raise
     finally:
-        _remove_quietly(stage_path)
+        stage.discard()
     return stats
 
 
-def _build(db_path, stage_path, root, entries, ignore, meta, progress, is_cancelled) -> BuildStats:
+def build_drive_db_in_memory(
+    root: str,
+    entries: Iterable[RawEntry],
+    *,
+    memory_limit: int,
+    spill_dir: Callable[[], Path],
+    ignore: IgnoreRules | None = None,
+    meta: dict | None = None,
+    progress: ProgressCallback | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> tuple[bytes | Path, BuildStats]:
+    """ドライブ DB をメモリ上に作る(暗号化カタログ用。平文をディスクに書かない)。
+
+    戻り値は (DB のバイト列, 統計)。``memory_limit`` を超えた場合だけ ``spill_dir()`` の下の一時ファイルに
+    退避し、バイト列の代わりにそのパスを返す。
+    """
+    out = WorkDb.in_memory(memory_limit, spill_dir, "files")
+    stage = WorkDb.in_memory(memory_limit, spill_dir, "stage")
+    try:
+        stats = _build(out, stage, root, entries, ignore, meta or {}, progress, is_cancelled)
+        return out.finish(), stats
+    except BaseException:
+        out.discard()
+        raise
+    finally:
+        stage.discard()
+
+
+def _build(out: WorkDb, stage: WorkDb, root, entries, ignore, meta, progress, is_cancelled) -> BuildStats:
     def check_cancel() -> None:
         if is_cancelled is not None and is_cancelled():
             raise ScanCancelled()
@@ -132,66 +150,66 @@ def _build(db_path, stage_path, root, entries, ignore, meta, progress, is_cancel
     prefix_len = len(prefix)
     prefix_lower = prefix.lower()
 
-    # --- 1. 一時 DB に取り込み、パス順に並べ替える -------------------------------------
-    stage = _fast_connection(stage_path)
-    try:
-        stage.execute("CREATE TABLE raw(k TEXT NOT NULL, is_dir INTEGER, size INTEGER, mtime INTEGER, ctime INTEGER, attrs INTEGER)")
-        stage.execute("BEGIN")
-        batch: list[tuple] = []
-        staged = 0
-        for entry in entries:
-            path = entry.path
-            if path[:prefix_len].lower() != prefix_lower:
-                continue
-            rel = path[prefix_len:]
-            if not rel:
-                continue
-            batch.append((rel.replace("\\", _SEP), int(entry.is_dir), entry.size, entry.mtime, entry.ctime, entry.attrs))
-            if len(batch) >= _BATCH:
-                stage.executemany("INSERT INTO raw VALUES (?,?,?,?,?,?)", batch)
-                staged += len(batch)
-                batch.clear()
-                check_cancel()
-                if progress:
-                    progress("read", staged)
-        if batch:
-            stage.executemany("INSERT INTO raw VALUES (?,?,?,?,?,?)", batch)
-            staged += len(batch)
-        stage.execute("COMMIT")
-        if progress:
-            progress("read", staged)
-        check_cancel()
+    # --- 1. 作業用 DB に取り込み、パス順に並べ替える -----------------------------------
+    stage.conn.execute("CREATE TABLE raw(k TEXT NOT NULL, is_dir INTEGER, size INTEGER, mtime INTEGER, ctime INTEGER, attrs INTEGER)")
+    batch: list[tuple] = []
+    staged = 0
 
-        # --- 2. 先行順に id を振りながら本 DB へ書き込む --------------------------------
-        out = _fast_connection(db_path)
-        try:
-            out.executescript(_SCHEMA)
-            out.execute("BEGIN")
-            stats = _write_entries(out, stage, ignore, progress, check_cancel)
-            out.execute(_INDEX)
-            full_meta = dict(meta)
-            full_meta.update(
-                schema_version=SCHEMA_VERSION,
-                root=prefix if len(prefix) == 3 else prefix.rstrip("\\"),
-                file_count=stats.file_count,
-                dir_count=stats.dir_count,
-                total_size=stats.total_size,
-                ignored_count=stats.ignored_count,
-                ignore_patterns=list(ignore.patterns) if ignore else [],
-            )
-            out.executemany(
-                "INSERT INTO meta VALUES (?, ?)",
-                [(key, json.dumps(value, ensure_ascii=False)) for key, value in full_meta.items()],
-            )
-            out.execute("COMMIT")
-        finally:
-            out.close()
-    finally:
-        stage.close()
+    def flush_stage() -> None:
+        nonlocal staged
+        stage.conn.execute("BEGIN")
+        stage.conn.executemany("INSERT INTO raw VALUES (?,?,?,?,?,?)", batch)
+        stage.conn.execute("COMMIT")
+        stage.checkpoint()
+        staged += len(batch)
+        batch.clear()
+
+    for entry in entries:
+        path = entry.path
+        if path[:prefix_len].lower() != prefix_lower:
+            continue
+        rel = path[prefix_len:]
+        if not rel:
+            continue
+        batch.append((rel.replace("\\", _SEP), int(entry.is_dir), entry.size, entry.mtime, entry.ctime, entry.attrs))
+        if len(batch) >= _BATCH:
+            flush_stage()
+            check_cancel()
+            if progress:
+                progress("read", staged)
+    if batch:
+        flush_stage()
+    if progress:
+        progress("read", staged)
+    check_cancel()
+
+    # --- 2. 先行順に id を振りながら本 DB へ書き込む ------------------------------------
+    if stage.on_disk:
+        out.checkpoint(force=True)  # 作業用 DB がメモリに収まらなかったなら、本 DB も収まらない
+    out.conn.executescript(_SCHEMA)
+    stats = _write_entries(out, stage.conn, ignore, progress, check_cancel)
+    out.conn.execute("BEGIN")
+    out.conn.execute(_INDEX)
+    full_meta = dict(meta)
+    full_meta.update(
+        schema_version=SCHEMA_VERSION,
+        root=prefix if len(prefix) == 3 else prefix.rstrip("\\"),
+        file_count=stats.file_count,
+        dir_count=stats.dir_count,
+        total_size=stats.total_size,
+        ignored_count=stats.ignored_count,
+        ignore_patterns=list(ignore.patterns) if ignore else [],
+    )
+    out.conn.executemany(
+        "INSERT INTO meta VALUES (?, ?)",
+        [(key, json.dumps(value, ensure_ascii=False)) for key, value in full_meta.items()],
+    )
+    out.conn.execute("COMMIT")
+    out.checkpoint()  # 最終的に上限を超えていたら、バイト列に複製せず一時ファイルとして渡す
     return stats
 
 
-def _write_entries(out, stage, ignore, progress, check_cancel) -> BuildStats:
+def _write_entries(out: WorkDb, stage, ignore, progress, check_cancel) -> BuildStats:
     ignore = ignore if ignore else None
     uses_paths = bool(ignore and ignore.uses_paths)
     insert = "INSERT INTO entries VALUES (?,?,?,?,?,?,?,?,?,?,?)"
@@ -205,6 +223,15 @@ def _write_entries(out, stage, ignore, progress, check_cancel) -> BuildStats:
     ignored = 0
     skip_prefix: str | None = None
     previous_key: str | None = None
+
+    def flush() -> None:
+        nonlocal written
+        out.conn.execute("BEGIN")
+        out.conn.executemany(insert, rows)
+        out.conn.execute("COMMIT")
+        out.checkpoint()
+        written += len(rows)
+        rows.clear()
 
     def open_dir(name: str, mtime, ctime, attrs) -> None:
         nonlocal next_id
@@ -273,9 +300,7 @@ def _write_entries(out, stage, ignore, progress, check_cancel) -> BuildStats:
             top.files += 1
 
         if len(rows) >= _BATCH:
-            out.executemany(insert, rows)
-            written += len(rows)
-            rows.clear()
+            flush()
             check_cancel()
             if progress:
                 progress("build", written)
@@ -283,8 +308,7 @@ def _write_entries(out, stage, ignore, progress, check_cancel) -> BuildStats:
     while names:
         close_dir()
     if rows:
-        out.executemany(insert, rows)
-        written += len(rows)
+        flush()
     if progress:
         progress("build", written)
     return BuildStats(root_dir.files, root_dir.dirs, root_dir.size, ignored)
@@ -303,6 +327,13 @@ _SORT_COLUMNS = {
 }
 
 
+def readonly_uri(source: str | os.PathLike[str]) -> str:
+    """SQLite を読み取り専用で開くための URI。``file:`` で始まる文字列は URI としてそのまま使う。"""
+    if isinstance(source, str) and source.startswith("file:"):
+        return source
+    return f"{Path(source).resolve().as_uri()}?mode=ro"
+
+
 def like_pattern(term: str) -> str:
     """部分一致用の LIKE パターン (``ESCAPE '\\'`` 前提)。"""
     escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
@@ -317,14 +348,15 @@ def split_terms(text: str) -> list[str]:
 class DriveDB:
     """読み取り専用で開いたドライブ DB。接続はスレッド間で共有せず、別スレッドでは ``clone()`` を使う。"""
 
-    def __init__(self, path: str | os.PathLike[str]):
-        self.path = Path(path)
-        self._conn = sqlite3.connect(f"{self.path.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=False)
+    def __init__(self, source: str | os.PathLike[str]):
+        self.source = source  # ファイルのパス、または ``file:`` で始まる SQLite の URI (メモリ上の共有 DB など)
+        self._conn = sqlite3.connect(readonly_uri(source), uri=True, check_same_thread=False)
+        keep_temp_in_memory(self._conn)  # 暗号化カタログの内容が SQLite の一時ファイルに出ないようにする
         self._meta: dict | None = None
         self._dir_paths: dict[int, str] = {ROOT_ID: ""}
 
     def clone(self) -> DriveDB:
-        return DriveDB(self.path)
+        return DriveDB(self.source)
 
     def close(self) -> None:
         self._conn.close()

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QDialog,
     QDialogButtonBox,
@@ -24,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..core.catalog import Catalog
+from ..core.errors import CatalogError
 from ..core.es_client import EsClient, EsError, find_es_exe
 from ..core.settings import AppSettings
 
@@ -115,11 +120,14 @@ _PARAM_LABELS = {
 class CatalogSettingsDialog(QDialog):
     """カタログ毎の設定(カタログ自体に保存される)。"""
 
-    def __init__(self, catalog: Catalog, parent=None):
+    def __init__(self, catalog: Catalog, parent=None, prepare_rewrite: Callable[[], None] | None = None):
+        """``prepare_rewrite`` は暗号化の切り替えなどでカタログを書き換える直前に呼ばれる(開いている DB を閉じる用)。"""
         super().__init__(parent)
         self.setWindowTitle("カタログ設定")
         self.resize(620, 560)
         self._catalog = catalog
+        self._prepare_rewrite = prepare_rewrite
+        self.catalog_rewritten = False  # 暗号化の切り替えやパスワード変更をその場で実行したか
         settings = catalog.settings
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
@@ -159,11 +167,37 @@ class CatalogSettingsDialog(QDialog):
         ignore_layout.addWidget(self._ignore)
         tabs.addTab(ignore, "無視リスト")
 
-        # --- パスワード
+        # --- 暗号化 / パスワード
         password = QWidget()
         password_layout = QVBoxLayout(password)
         self._password_state = QLabel()
         password_layout.addWidget(self._password_state)
+
+        encryption_box = QGroupBox("暗号化")
+        encryption_layout = QVBoxLayout(encryption_box)
+        row = QHBoxLayout()
+        self._encrypt_button = QPushButton("このカタログを暗号化…")
+        self._encrypt_button.clicked.connect(self._encrypt)
+        self._change_key_button = QPushButton("パスワードを変更…")
+        self._change_key_button.clicked.connect(self._change_encryption_password)
+        self._decrypt_button = QPushButton("暗号化を解除…")
+        self._decrypt_button.clicked.connect(self._decrypt)
+        for button in (self._encrypt_button, self._change_key_button, self._decrypt_button):
+            row.addWidget(button)
+        row.addStretch(1)
+        encryption_layout.addLayout(row)
+        encryption_note = QLabel(
+            "カタログの中身 (ファイル名・サムネイル・テキスト内容など) を AES-256 で暗号化します。"
+            "暗号化したカタログは、閲覧やスキャンのときもディスクに平文を書きません。\n"
+            "パスワードを忘れるとカタログを開けなくなり、復旧する方法はありません。"
+            "これらの操作はボタンを押した時点で実行されます (OK / キャンセルとは無関係)。"
+        )
+        encryption_note.setWordWrap(True)
+        encryption_layout.addWidget(encryption_note)
+        password_layout.addWidget(encryption_box)
+
+        self._gate_box = QGroupBox("パスワードの確認のみ (暗号化なし)")
+        gate_layout = QVBoxLayout(self._gate_box)
         row = QHBoxLayout()
         self._set_password = QPushButton("パスワードを設定 / 変更…")
         self._set_password.clicked.connect(self._change_password)
@@ -172,16 +206,17 @@ class CatalogSettingsDialog(QDialog):
         row.addWidget(self._set_password)
         row.addWidget(self._clear_password)
         row.addStretch(1)
-        password_layout.addLayout(row)
+        gate_layout.addLayout(row)
         note = QLabel(
-            "注意: 現在のパスワード保護は、このアプリでカタログを開くときの確認のみです。"
-            "カタログファイル自体は暗号化されないため、ZIP として展開すれば中身を読むことができます"
-            "(暗号化保存は将来対応予定)。"
+            "このアプリでカタログを開くときにパスワードを確認するだけの保護です。"
+            "カタログファイル自体は暗号化されないため、ZIP として展開すれば中身を読むことができます。"
+            "中身を守るには上の「暗号化」を使ってください。"
         )
         note.setWordWrap(True)
-        password_layout.addWidget(note)
+        gate_layout.addWidget(note)
+        password_layout.addWidget(self._gate_box)
         password_layout.addStretch(1)
-        tabs.addTab(password, "パスワード")
+        tabs.addTab(password, "暗号化 / パスワード")
         self._pending_password: str | None | bool = False  # False = 変更なし / None = 解除 / str = 新パスワード
         self._update_password_state()
 
@@ -226,9 +261,69 @@ class CatalogSettingsDialog(QDialog):
         return self._pending_password is not None
 
     def _update_password_state(self) -> None:
+        encrypted = self._catalog.encrypted
         protected = self._has_password()
-        self._password_state.setText("状態: パスワード保護あり" if protected else "状態: パスワード保護なし")
-        self._clear_password.setEnabled(protected)
+        if encrypted:
+            state = "状態: 暗号化されています"
+        elif protected:
+            state = "状態: パスワードの確認あり (暗号化なし)"
+        else:
+            state = "状態: 保護なし"
+        self._password_state.setText(state)
+        self._encrypt_button.setVisible(not encrypted)
+        self._change_key_button.setVisible(encrypted)
+        self._decrypt_button.setVisible(encrypted)
+        self._gate_box.setEnabled(not encrypted)
+        self._clear_password.setEnabled(not encrypted and protected)
+
+    def _rewrite_catalog(self, action: Callable[[], None], failure: str) -> bool:
+        """暗号化の切り替えなど、カタログ全体を書き換える操作をその場で実行する。"""
+        if self._prepare_rewrite is not None:
+            self._prepare_rewrite()
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            action()
+        except (CatalogError, OSError) as error:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.critical(self, self.windowTitle(), f"{failure}\n\n{error}")
+            return False
+        else:
+            QApplication.restoreOverrideCursor()
+        self.catalog_rewritten = True
+        self._pending_password = False
+        self._update_password_state()
+        return True
+
+    def _encrypt(self) -> None:
+        answer = QMessageBox.warning(
+            self, "カタログの暗号化",
+            "このカタログを暗号化します。\n\n"
+            "パスワードを忘れるとカタログを開けなくなり、復旧する方法はありません。続けますか?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+        )  # fmt: skip
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        password = ask_new_password(self, "暗号化のパスワード")
+        if password is None:
+            return
+        if self._rewrite_catalog(lambda: self._catalog.encrypt(password), "暗号化に失敗しました。"):
+            QMessageBox.information(self, "カタログの暗号化", "カタログを暗号化しました。")
+
+    def _change_encryption_password(self) -> None:
+        password = ask_new_password(self, "パスワードの変更")
+        if password is None:
+            return
+        if self._rewrite_catalog(lambda: self._catalog.set_password(password), "パスワードを変更できません。"):
+            QMessageBox.information(self, "パスワードの変更", "パスワードを変更しました。")
+
+    def _decrypt(self) -> None:
+        answer = QMessageBox.warning(
+            self, "暗号化の解除",
+            "暗号化を解除すると、カタログの中身は誰でも読める状態になります。続けますか?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+        )  # fmt: skip
+        if answer == QMessageBox.StandardButton.Yes:
+            self._rewrite_catalog(self._catalog.decrypt, "暗号化を解除できません。")
 
     def _change_password(self) -> None:
         password = ask_new_password(self, "パスワードの設定")
@@ -247,12 +342,14 @@ class CatalogSettingsDialog(QDialog):
         settings["ignore_patterns"] = [line.strip() for line in self._ignore.toPlainText().splitlines() if line.strip()]
         if self._extractor_editors:
             settings["context"] = {editor.kind: editor.values() for editor in self._extractor_editors}
+        if self._prepare_rewrite is not None:
+            self._prepare_rewrite()
         try:
-            if self._pending_password is False:
+            if self._pending_password is False or self._catalog.encrypted:
                 self._catalog.save()
             else:
                 self._catalog.set_password(self._pending_password or None)
-        except OSError as error:
+        except (CatalogError, OSError) as error:
             QMessageBox.critical(self, self.windowTitle(), f"カタログを保存できません。\n\n{error}")
             return
         super().accept()
@@ -285,6 +382,17 @@ class AppSettingsDialog(QDialog):
         self._limit.setSingleStep(10000)
         self._limit.setValue(app_settings.result_limit)
         form.addRow("検索結果の表示上限:", self._limit)
+
+        self._memory_limit = QSpinBox()
+        self._memory_limit.setRange(16, 1_048_576)
+        self._memory_limit.setSingleStep(128)
+        self._memory_limit.setSuffix(" MB")
+        self._memory_limit.setValue(app_settings.memory_limit_mb)
+        self._memory_limit.setToolTip(
+            "暗号化カタログのデータベースは、ディスクに平文を書かないようメモリ上で開きます。\n"
+            "1 つがこの大きさを超える場合だけ、一時フォルダに復号して開き、閉じるときに削除します。"
+        )
+        form.addRow("暗号化カタログをメモリで開く上限:", self._memory_limit)
         layout.addLayout(form)
 
         test_row = QHBoxLayout()
@@ -322,5 +430,6 @@ class AppSettingsDialog(QDialog):
         self._settings.es_path = self._es_path.text().strip()
         self._settings.es_instance = self._instance.text().strip()
         self._settings.result_limit = self._limit.value()
+        self._settings.memory_limit_mb = self._memory_limit.value()
         self._settings.save()
         super().accept()

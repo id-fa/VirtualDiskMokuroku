@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import __version__
 from .core import scanner
-from .core.catalog import CATALOG_EXTENSION, LEGACY_CATALOG_EXTENSIONS, Catalog
+from .core.catalog import CATALOG_EXTENSION, LEGACY_CATALOG_EXTENSIONS, Catalog, cleanup_stale_sessions
 from .core.drive_db import ROOT_ID, split_terms
 from .core.errors import CatalogError
 from .core.es_client import EsClient, EsError, find_es_exe
@@ -18,10 +18,18 @@ from .core.volume import get_volume_info, list_volumes
 from .pipeline import scan_into_catalog
 
 
-def _open_catalog(path: str, password: str | None, create: bool = False) -> Catalog:
+_opened: list[Catalog] = []  # 終了時に閉じる(暗号化カタログの復号済みデータを手放す)
+
+
+def _open_catalog(path: str, password: str | None, create: bool = False, encrypt: bool = False) -> Catalog:
     if create and not Path(path).exists():
-        return Catalog.create(path, password)
-    return Catalog.open(path, password)
+        if encrypt and not password:
+            raise CatalogError("--encrypt には --password の指定が必要です")
+        catalog = Catalog.create(path, password, encrypt=encrypt)
+    else:
+        catalog = Catalog.open(path, password)
+    _opened.append(catalog)
+    return catalog
 
 
 def cmd_volumes(_args: argparse.Namespace) -> int:
@@ -39,7 +47,7 @@ def cmd_volumes(_args: argparse.Namespace) -> int:
 
 
 def cmd_scan(args: argparse.Namespace) -> int:
-    catalog = _open_catalog(args.catalog, args.password, create=True)
+    catalog = _open_catalog(args.catalog, args.password, create=True, encrypt=args.encrypt)
     es_path = find_es_exe(args.es)
     es = EsClient(es_path, args.instance) if es_path and args.source != scanner.SOURCE_WALK else None
 
@@ -84,6 +92,8 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 def cmd_list(args: argparse.Namespace) -> int:
     catalog = _open_catalog(args.catalog, args.password)
+    if catalog.encrypted:
+        print("(暗号化カタログ)")
     for drive in catalog.drives:
         print(
             f"{drive['name']}  [{drive.get('label', '')} / {drive.get('serial', '')} / {drive.get('filesystem', '')}]  "
@@ -123,6 +133,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--instance", help="Everything のインスタンス名")
     scan.add_argument("--name", help="カタログ上の表示名")
     scan.add_argument("--new", action="store_true", help="既存ドライブと照合せず新規に追加")
+    scan.add_argument("--encrypt", action="store_true", help="カタログを新規作成する場合に暗号化する (--password が必要)")
     scan.add_argument("--password")
     scan.set_defaults(func=cmd_scan)
 
@@ -155,8 +166,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 2
+    cleanup_stale_sessions()
     try:
         return args.func(args)
     except (CatalogError, EsError, OSError) as error:
         print(f"エラー: {error}", file=sys.stderr)
         return 1
+    finally:
+        for catalog in _opened:
+            catalog.close()
+        _opened.clear()

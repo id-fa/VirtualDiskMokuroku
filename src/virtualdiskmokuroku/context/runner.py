@@ -15,10 +15,11 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..core.drive_db import ROOT_ID, DriveDB
+from ..core.drive_db import ROOT_ID, DriveDB, readonly_uri
+from ..core.workdb import WorkDb, keep_temp_in_memory, remove_quietly
 from . import EXTRACTORS
 from .base import EntryWriter, Extractor
-from .context_db import STATUS_OK, create_context_db, finish_context_db, load_result, write_error, write_result
+from .context_db import STATUS_OK, finish_context_db, init_context_db, load_result, write_error, write_result
 
 ProgressCallback = Callable[[str, int], None]
 
@@ -53,15 +54,15 @@ def unavailable_kinds(settings: dict | None) -> list[str]:
     ]
 
 
-def _remove_quietly(path: str | os.PathLike[str]) -> None:
-    try:
-        os.remove(path)
-    except OSError:
-        pass
+def _open_readonly(source: str | os.PathLike[str]) -> sqlite3.Connection:
+    conn = sqlite3.connect(readonly_uri(source), uri=True)
+    keep_temp_in_memory(conn)
+    return conn
 
 
-def _open_readonly(path: str | os.PathLike[str]) -> sqlite3.Connection:
-    return sqlite3.connect(f"{Path(path).resolve().as_uri()}?mode=ro", uri=True)
+def _available(source: str | os.PathLike[str]) -> bool:
+    """前回の DB を開けそうか。URI (メモリ上の DB など) は開いてみるまで分からないので真とする。"""
+    return (isinstance(source, str) and source.startswith("file:")) or os.path.isfile(source)
 
 
 def _real_path(root: str, rel_path: str) -> str:
@@ -161,15 +162,43 @@ def build_context_db(
     失敗時は作りかけの DB を残さない。
     """
     context_db_path = Path(context_db_path)
-    _remove_quietly(context_db_path)
+    remove_quietly(context_db_path)
+    work = WorkDb(context_db_path)
     try:
-        return _build(files_db_path, context_db_path, scan_root, settings, previous, progress, is_cancelled)
+        stats = _build(files_db_path, work, scan_root, settings, previous, progress, is_cancelled)
+        work.finish()
+        return stats
     except BaseException:
-        _remove_quietly(context_db_path)
+        work.discard()
         raise
 
 
-def _build(files_db_path, context_db_path, scan_root, settings, previous, progress, is_cancelled) -> ContextStats:
+def build_context_db_in_memory(
+    files_db_source: str | os.PathLike[str],
+    scan_root: str,
+    settings: dict,
+    *,
+    memory_limit: int,
+    spill_dir: Callable[[], Path],
+    previous: tuple[str | os.PathLike[str], str | os.PathLike[str]] | None = None,
+    progress: ProgressCallback | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
+) -> tuple[bytes | Path, ContextStats]:
+    """``build_context_db`` と同じ処理を、平文をディスクに書かずメモリ上で行う(暗号化カタログ用)。
+
+    戻り値は (context.db のバイト列, 統計)。``memory_limit`` を超えた場合だけ ``spill_dir()`` の下の
+    一時ファイルに退避し、バイト列の代わりにそのパスを返す。DB の指定にはパスのほか SQLite の URI も使える。
+    """
+    work = WorkDb.in_memory(memory_limit, spill_dir, "context")
+    try:
+        stats = _build(files_db_source, work, scan_root, settings, previous, progress, is_cancelled)
+        return work.finish(), stats
+    except BaseException:
+        work.discard()
+        raise
+
+
+def _build(files_db_path, work: WorkDb, scan_root, settings, previous, progress, is_cancelled) -> ContextStats:
     def cancel_requested() -> bool:
         return is_cancelled is not None and is_cancelled()
 
@@ -194,10 +223,11 @@ def _build(files_db_path, context_db_path, scan_root, settings, previous, progre
             progress("context_total", len(targets))
 
         # --- 2. 抽出(前回結果があれば引き継ぐ) ------------------------------------------
-        conn = create_context_db(context_db_path)
+        init_context_db(work.conn)
+        conn = work.conn
         old: _Previous | None = None
         try:
-            if previous is not None and extractors and all(os.path.isfile(path) for path in previous):
+            if previous is not None and extractors and all(_available(source) for source in previous):
                 try:
                     old = _Previous(previous[0], previous[1], extractors)
                 except sqlite3.Error:
@@ -243,6 +273,8 @@ def _build(files_db_path, context_db_path, scan_root, settings, previous, progre
 
                 if index % _COMMIT_INTERVAL == 0:
                     conn.execute("COMMIT")
+                    work.checkpoint()  # メモリ上で大きくなりすぎたら一時ファイルへ退避 (接続が入れ替わる)
+                    conn = work.conn
                     conn.execute("BEGIN")
                 if progress and not stats.cancelled and index % _PROGRESS_INTERVAL == 0:
                     progress("context", index)
@@ -261,10 +293,10 @@ def _build(files_db_path, context_db_path, scan_root, settings, previous, progre
             )
             finish_context_db(conn, meta)
             conn.execute("COMMIT")
+            work.checkpoint()  # 最終的に上限を超えていたら、バイト列に複製せず一時ファイルとして渡す
             if progress and not stats.cancelled:
                 progress("context", len(targets))
         finally:
-            conn.close()
             if old is not None:
                 old.close()
     return stats

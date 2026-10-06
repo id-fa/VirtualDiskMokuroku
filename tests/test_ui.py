@@ -339,6 +339,146 @@ def test_limit_and_drive_management(window):
     assert wait_until(lambda: "only_in_two.txt" in names(window))
 
 
+def test_encrypted_catalog_leaves_no_plaintext_on_disk(window, tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+    pytest.importorskip("virtualdiskmokuroku.context")
+    Image = pytest.importorskip("PIL.Image")
+    import tempfile
+    import zipfile
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from virtualdiskmokuroku.core.search import SCOPE_ALL
+    from virtualdiskmokuroku.ui.scan_dialog import ScanWorker
+    from virtualdiskmokuroku.ui.settings_dialogs import CatalogSettingsDialog
+    from virtualdiskmokuroku.ui.thumbnail_view import VIEW_DETAILS, VIEW_TILES
+
+    sqlite_magic = b"SQLite format 3"
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp_dir))  # 一時ファイルの置き場をここに向けて監視する
+    cache_dir = tmp_path / "cache"
+
+    def scan_disk():
+        """一時フォルダとキャッシュにある、平文の SQLite ファイルや一覧の CSV。"""
+        found = []
+        for folder in (temp_dir, cache_dir):
+            for base, _dirs, file_names in os.walk(folder):
+                for file_name in file_names:
+                    path = os.path.join(base, file_name)
+                    with open(path, "rb") as f:
+                        head = f.read(len(sqlite_magic))
+                    if head == sqlite_magic or file_name.lower().endswith(".csv"):
+                        found.append(path)
+        return found
+
+    # それまで開いていた通常のカタログのキャッシュは対象外。暗号化カタログを扱い始めてから増えた分だけを見る
+    window._close_databases()
+    baseline = set(scan_disk())
+
+    def plaintext_left():
+        return [path for path in scan_disk() if path not in baseline]
+
+    tree = tmp_path / "secret_tree"
+    (tree / "書類").mkdir(parents=True)
+    (tree / "書類" / "極秘メモ.txt").write_bytes("これは誰にも見せない内容です".encode("cp932"))
+    for number in range(5):
+        Image.new("RGB", (64, 32), (200, number * 40, 90)).save(tree / f"photo_{number}.png")
+
+    # --- 暗号化カタログを作ってスキャン (拡張コンテキストあり)
+    from virtualdiskmokuroku.core.catalog import Catalog as CatalogClass
+
+    catalog = CatalogClass.create(tmp_path / "secret.vdmoku", "合言葉", encrypt=True)
+    catalog.settings["context"] = {"text": {"enabled": True}, "thumbnail": {"enabled": True, "size": 48}}
+    catalog.save()
+    window._set_catalog(catalog)
+    assert "[暗号化]" in window.windowTitle() and window.act_export_decrypted.isEnabled()
+
+    def scan(drive_id):
+        outcome = {}
+        worker = ScanWorker(catalog, str(tree), drive_id, "秘密", scanner.SOURCE_WALK, None)
+        worker.succeeded.connect(lambda drive, result, stats: outcome.update(drive=drive, stats=stats, result=result))
+        worker.failed.connect(lambda message: outcome.update(error=message))
+        worker.start()
+        assert wait_until(lambda: worker.isFinished() and outcome, timeout=30), outcome
+        assert "error" not in outcome, outcome
+        return outcome
+
+    outcome = scan(None)
+    drive = outcome["drive"]
+    assert outcome["stats"].processed == 6 and outcome["result"].database is None
+    assert plaintext_left() == []
+
+    # --- 閲覧・検索・サムネイル表示
+    window._after_catalog_changed(drive["id"])
+    assert wait_until(lambda: len(names(window)) == 6)
+    window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_ALL))
+    window.context_check.setChecked(True)
+    window.filter_edit.setText("誰にも見せない")
+    wait_names(window, ["極秘メモ.txt"])
+    window.table.selectRow(0)
+    assert wait_until(lambda: window.properties._text.toPlainText() == "これは誰にも見せない内容です")
+    window.filter_edit.setText("")
+    assert wait_until(lambda: len(names(window)) == 6)
+    window.set_view_mode(VIEW_TILES)
+    photo = window.table_model.rows[names(window).index("photo_3.png")]
+    info = window.thumb_provider.get(photo)
+    assert info.pixmap is not None and info.resolution == "64 x 32"
+    assert not window.thumb_view.grab().isNull()
+    window.set_view_mode(VIEW_DETAILS)
+    assert plaintext_left() == []
+
+    # --- 文字コード再取込 (メモリ上で書き換えてカタログへ戻す)
+    memo_id = window._db(drive["id"]).find_path("書類\\極秘メモ.txt").id
+    window._redecode_text(drive["id"], memo_id, "latin-1")
+    assert wait_until(lambda: len(names(window)) == 6)
+    assert "誰にも" not in window._context_db(drive["id"]).get_text(memo_id)[1]
+    window._redecode_text(drive["id"], memo_id, "cp932")
+    assert wait_until(lambda: len(names(window)) == 6)
+    assert window._context_db(drive["id"]).get_text(memo_id)[1] == "これは誰にも見せない内容です"
+
+    # --- 更新スキャン: 前回の結果 (メモリ上の DB) を引き継ぐ
+    outcome = scan(drive["id"])
+    assert outcome["stats"].reused == 6 and outcome["stats"].processed == 0
+    assert len(outcome["drive"]["backups"]) == 1
+    window._after_catalog_changed(drive["id"])
+    assert wait_until(lambda: len(names(window)) == 6)
+    assert plaintext_left() == []
+
+    # --- カタログのどこにも平文は無い
+    raw = catalog.path.read_bytes()
+    for needle in (sqlite_magic, "極秘メモ".encode("utf-8"), "秘密".encode("utf-8"), b"photo_3.png", b"\xff\xd8\xff\xe0"):
+        assert needle not in raw
+
+    # --- 設定画面からのパスワード変更と暗号化の解除 (その場で実行される)
+    dialog = CatalogSettingsDialog(catalog, window, prepare_rewrite=window._close_databases)
+    assert not dialog._change_key_button.isHidden() and dialog._encrypt_button.isHidden()
+    assert dialog._rewrite_catalog(lambda: catalog.set_password("新しい合言葉"), "失敗")
+    with pytest.raises(Exception):
+        CatalogClass.open(catalog.path, "合言葉")
+    reopened = CatalogClass.open(catalog.path, "新しい合言葉")
+    assert reopened.drive(drive["id"])["has_context"]
+    reopened.close()
+
+    # 復号して書き出したカタログは、暗号化なしで同じ内容を持つ
+    exported = tmp_path / "exported" / "plain.vdmoku"
+    exported.parent.mkdir()
+    catalog.export_decrypted(exported)
+    with zipfile.ZipFile(exported) as archive:
+        assert archive.read(f"drives/{drive['id']}/files.db").startswith(sqlite_magic)
+    assert plaintext_left() == []  # 書き出し先以外には平文を作らない
+
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    dialog._decrypt()
+    assert dialog.catalog_rewritten and not catalog.encrypted
+    assert not dialog._encrypt_button.isHidden() and dialog._change_key_button.isHidden()
+    dialog.close()
+    window._update_ui_state()
+    assert "[暗号化]" not in window.windowTitle() and not window.act_export_decrypted.isEnabled()
+    window._run_query()
+    assert wait_until(lambda: len(names(window)) == 6)
+
+
 def test_thumbnail_view_modes(window, tmp_path):
     pytest.importorskip("virtualdiskmokuroku.context")
     Image = pytest.importorskip("PIL.Image")

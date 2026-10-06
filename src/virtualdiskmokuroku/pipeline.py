@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -13,6 +14,7 @@ from .core.catalog import CONTEXT_DB, FILES_DB, Catalog
 from .core.drive_db import ProgressCallback
 from .core.es_client import EsClient
 from .core.ignore import IgnoreRules
+from .core.workdb import open_shared_memory_db, remove_quietly
 
 
 @dataclass(slots=True)
@@ -45,15 +47,21 @@ def scan_into_catalog(
 
     ファイルリスト取得中のキャンセルは ``ScanCancelled`` を送出して何も登録しない。拡張コンテキスト取得中の
     キャンセルは、取得できた分までを登録する(``context_stats.cancelled`` が真になる)。
+
+    暗号化カタログでは DB をメモリ上で作り、平文をディスクに書かない(メモリの上限を超える場合だけ、
+    カタログのセッション用一時フォルダを使い、終わったら削除する)。
     """
     settings = catalog.settings
     scan_settings = settings.get("scan", {})
-    work_dir = Path(tempfile.mkdtemp(prefix="vdmoku_scan_"))
+    secure = catalog.encrypted
+    work_dir = None if secure else Path(tempfile.mkdtemp(prefix="vdmoku_scan_"))
+    artifacts: list[bytes | Path] = []
+    memory_owner: sqlite3.Connection | None = None
+    result: scanner.ScanResult | None = None
     try:
-        files_db = work_dir / FILES_DB
         result = scanner.scan_to_db(
             root,
-            files_db,
+            None if work_dir is None else work_dir / FILES_DB,
             es=es,
             source=source,
             ignore=IgnoreRules(settings.get("ignore_patterns", [])),
@@ -61,15 +69,20 @@ def scan_into_catalog(
             with_attrs=scan_settings.get("with_attrs", True),
             progress=progress,
             is_cancelled=is_cancelled,
+            memory_limit=catalog.memory_limit,
+            spill_dir=catalog.session_dir,
         )
+        files_db = result.database
+        assert files_db is not None
+        artifacts.append(files_db)
         warnings = result.warnings
 
-        context_db = None
+        context_db: bytes | Path | None = None
         context_stats = None
         context_settings = enabled_context_settings(catalog)
         if context_settings:
             from .context import EXTRACTORS
-            from .context.runner import build_context_db, unavailable_kinds
+            from .context.runner import build_context_db, build_context_db_in_memory, unavailable_kinds
 
             missing = unavailable_kinds(context_settings)
             if missing:
@@ -78,13 +91,28 @@ def scan_into_catalog(
 
             previous = None
             if drive_id and catalog.drive(drive_id).get("has_context"):
-                previous_context = catalog.extract_context_db(drive_id)
+                previous_context = catalog.context_source(drive_id)
                 if previous_context is not None:
-                    previous = (catalog.extract_db(drive_id), previous_context)
-            context_db = work_dir / CONTEXT_DB
-            context_stats = build_context_db(
-                files_db, context_db, root, context_settings, previous=previous, progress=progress, is_cancelled=is_cancelled
-            )
+                    previous = (catalog.db_source(drive_id), previous_context)
+            common = {"previous": previous, "progress": progress, "is_cancelled": is_cancelled}
+            if work_dir is not None:
+                context_db = work_dir / CONTEXT_DB
+                context_stats = build_context_db(files_db, context_db, root, context_settings, **common)
+            else:
+                files_source: str | Path
+                if isinstance(files_db, bytes):
+                    files_source, memory_owner = open_shared_memory_db(files_db)
+                else:
+                    files_source = files_db
+                context_db, context_stats = build_context_db_in_memory(
+                    files_source,
+                    root,
+                    context_settings,
+                    memory_limit=catalog.memory_limit,
+                    spill_dir=catalog.session_dir,
+                    **common,
+                )
+                artifacts.append(context_db)
 
         if progress:
             progress("save", 0)
@@ -98,4 +126,13 @@ def scan_into_catalog(
         )
         return ScanOutcome(drive, result, context_stats)
     finally:
-        shutil.rmtree(work_dir, ignore_errors=True)
+        if memory_owner is not None:
+            memory_owner.close()
+        if result is not None:
+            result.database = None  # 大きなバイト列を結果オブジェクトに抱えたままにしない
+        if work_dir is not None:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        else:
+            for artifact in artifacts:
+                if isinstance(artifact, Path):
+                    remove_quietly(artifact)  # 上限超過で一時フォルダへ退避した DB

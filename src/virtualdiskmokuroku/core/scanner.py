@@ -10,12 +10,14 @@ import os
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 
-from .drive_db import BuildStats, ProgressCallback, build_drive_db
+from .drive_db import BuildStats, ProgressCallback, build_drive_db, build_drive_db_in_memory
 from .errors import ScanCancelled
 from .es_client import EsClient, EsError, RawEntry
 from .ignore import IgnoreRules
 from .volume import VolumeInfo, get_volume_info
+from .workdb import DEFAULT_MEMORY_LIMIT
 
 SOURCE_AUTO = "auto"
 SOURCE_EVERYTHING = "everything"
@@ -94,6 +96,8 @@ class ScanResult:
     scanned_at: str
     meta: dict
     warnings: list[str] = field(default_factory=list)
+    # 作成したドライブ DB。ファイルに作った場合はそのパス、メモリ上に作った場合はバイト列
+    database: bytes | Path | None = None
 
 
 def choose_source(root: str, es: EsClient | None, requested: str = SOURCE_AUTO) -> tuple[str, list[str]]:
@@ -121,7 +125,7 @@ def choose_source(root: str, es: EsClient | None, requested: str = SOURCE_AUTO) 
 
 def scan_to_db(
     root: str,
-    db_path: str | os.PathLike[str],
+    db_path: str | os.PathLike[str] | None,
     *,
     es: EsClient | None = None,
     source: str = SOURCE_AUTO,
@@ -130,8 +134,14 @@ def scan_to_db(
     with_attrs: bool = True,
     progress: ProgressCallback | None = None,
     is_cancelled: Callable[[], bool] | None = None,
+    memory_limit: int = DEFAULT_MEMORY_LIMIT,
+    spill_dir: Callable[[], Path] | None = None,
 ) -> ScanResult:
-    """``root`` 以下をスキャンしてドライブ DB を ``db_path`` に作る。"""
+    """``root`` 以下をスキャンしてドライブ DB を作る。
+
+    ``db_path`` を指定するとそのファイルに作る。``None`` ならメモリ上に作り(暗号化カタログ用)、結果の
+    ``ScanResult.database`` にバイト列を入れる。その場合は ``spill_dir`` (上限超過時の退避先を返す関数) が必要。
+    """
     root = os.path.abspath(root)
     volume = get_volume_info(root)
     if not volume.ready:
@@ -157,7 +167,15 @@ def scan_to_db(
         except EsError:
             pass
 
-    stats = build_drive_db(db_path, root, entries, ignore=ignore, meta=meta, progress=progress, is_cancelled=is_cancelled)
+    common = {"ignore": ignore, "meta": meta, "progress": progress, "is_cancelled": is_cancelled}
+    database: bytes | Path
+    if db_path is not None:
+        stats = build_drive_db(db_path, root, entries, **common)
+        database = Path(db_path)
+    else:
+        if spill_dir is None:
+            raise ValueError("メモリ上に作る場合は spill_dir が必要です")
+        database, stats = build_drive_db_in_memory(root, entries, memory_limit=memory_limit, spill_dir=spill_dir, **common)
     if walk_errors:
         warnings.append(f"読み取れなかったフォルダ/ファイルが {len(walk_errors)} 件あります(例: {walk_errors[0]})")
-    return ScanResult(root, chosen, stats, volume, scanned_at, meta, warnings)
+    return ScanResult(root, chosen, stats, volume, scanned_at, meta, warnings, database)
