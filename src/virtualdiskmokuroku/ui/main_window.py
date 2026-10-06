@@ -80,6 +80,7 @@ _FILTER_DELAY_MS = 180
 ROLE_DRIVE = Qt.ItemDataRole.UserRole + 1
 ROLE_DIR = Qt.ItemDataRole.UserRole + 2
 ROLE_LOADED = Qt.ItemDataRole.UserRole + 3
+ROLE_GROUP = Qt.ItemDataRole.UserRole + 4  # グループの行 (ドライブをまとめる見出し) のグループ名
 
 
 @contextmanager
@@ -133,7 +134,9 @@ class MainWindow(QMainWindow):
         self.tree.setUniformRowHeights(True)
         self.tree.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._collapsed_groups: set[str] = set()  # 折りたたんであるグループ (ツリーを作り直しても保つ)
         self.tree.expanded.connect(self._on_tree_expanded)
+        self.tree.collapsed.connect(self._on_tree_collapsed)
         self.tree.selectionModel().currentChanged.connect(self._on_tree_current_changed)
         self.tree.customContextMenuRequested.connect(self._show_tree_menu)
 
@@ -312,6 +315,7 @@ class MainWindow(QMainWindow):
         self.act_scan = action("ドライブの追加 / 更新(&A)…", self.scan_drive, "Ctrl+D")
         self.act_rescan = action("このドライブを更新 (再スキャン)(&U)…", self.rescan_current_drive)
         self.act_rename = action("ドライブの表示名を変更(&R)…", self.rename_current_drive)
+        self.act_set_group = action("グループを変更(&G)…", self.set_current_drive_group)
         self.act_drive_info = action("ドライブ情報(&I)…", self.show_drive_info)
         self.act_remove = action("ドライブをカタログから削除(&D)…", self.remove_current_drive)
         self.restore_menu = QMenu("バックアップから復元(&B)", self)
@@ -352,6 +356,7 @@ class MainWindow(QMainWindow):
         drive_menu.addAction(self.act_rescan)
         drive_menu.addSeparator()
         drive_menu.addAction(self.act_rename)
+        drive_menu.addAction(self.act_set_group)
         drive_menu.addAction(self.act_drive_info)
         drive_menu.addMenu(self.restore_menu)
         drive_menu.addAction(self.act_remove)
@@ -417,7 +422,9 @@ class MainWindow(QMainWindow):
         has_drive = self._location is not None
         for item in (self.act_close, self.act_scan, self.act_catalog_settings, self.act_import_vcdcase):
             item.setEnabled(has_catalog)
-        for item in (self.act_rescan, self.act_rename, self.act_drive_info, self.act_remove, self.act_export):
+        for item in (
+            self.act_rescan, self.act_rename, self.act_set_group, self.act_drive_info, self.act_remove, self.act_export,
+        ):  # fmt: skip
             item.setEnabled(has_drive)
         self.restore_menu.setEnabled(has_drive)
         for widget in (self.filter_edit, self.scope_combo, self.address):
@@ -699,6 +706,7 @@ class MainWindow(QMainWindow):
             selection.blockSignals(False)
         if self.catalog is None:
             return
+        groups: dict[str, QStandardItem] = {}
         for drive in self.catalog.drives:
             item = QStandardItem(self._drive_icon, self._drive_text(drive))
             item.setData(drive["id"], ROLE_DRIVE)
@@ -708,7 +716,25 @@ class MainWindow(QMainWindow):
                 item.appendRow(QStandardItem())  # 展開時に読み込むためのプレースホルダ
             else:
                 item.setData(True, ROLE_LOADED)
-            self.tree_model.appendRow(item)
+            group = drive.get("group")
+            if not group:
+                self.tree_model.appendRow(item)
+                continue
+            # グループの行は、最初のドライブの位置に置く。選択はできない (展開・折りたたみと右クリックだけ)
+            parent = groups.get(group)
+            if parent is None:
+                parent = groups[group] = QStandardItem(self._folder_icon, group)
+                parent.setData(group, ROLE_GROUP)
+                parent.setData(True, ROLE_LOADED)
+                parent.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self.tree_model.appendRow(parent)
+            parent.appendRow(item)
+        self._collapsed_groups &= set(groups)
+        for group, parent in groups.items():
+            comments = {drive.get("group_comment") for drive in self.catalog.drives if drive.get("group") == group}
+            if len(comments) == 1 and None not in comments:
+                parent.setToolTip(comments.pop())
+            self.tree.setExpanded(parent.index(), group not in self._collapsed_groups)
 
     def _load_tree_children(self, item: QStandardItem) -> None:
         if item.data(ROLE_LOADED):
@@ -737,7 +763,13 @@ class MainWindow(QMainWindow):
     def _on_tree_expanded(self, index: QModelIndex) -> None:
         item = self.tree_model.itemFromIndex(index)
         if item is not None:
+            self._collapsed_groups.discard(item.data(ROLE_GROUP))
             self._load_tree_children(item)
+
+    def _on_tree_collapsed(self, index: QModelIndex) -> None:
+        item = self.tree_model.itemFromIndex(index)
+        if item is not None and item.data(ROLE_GROUP) is not None:
+            self._collapsed_groups.add(item.data(ROLE_GROUP))
 
     def _on_tree_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
         item = self.tree_model.itemFromIndex(current)
@@ -751,8 +783,10 @@ class MainWindow(QMainWindow):
     def _drive_item(self, drive_id: str) -> QStandardItem | None:
         for row in range(self.tree_model.rowCount()):
             item = self.tree_model.item(row)
-            if item.data(ROLE_DRIVE) == drive_id:
-                return item
+            members = [item.child(index) for index in range(item.rowCount())] if item.data(ROLE_GROUP) is not None else [item]
+            for member in members:
+                if member.data(ROLE_DRIVE) == drive_id:
+                    return member
         return None
 
     def _select_in_tree(self, drive_id: str, dir_id: int) -> None:
@@ -1173,14 +1207,18 @@ class MainWindow(QMainWindow):
 
     def _build_tree_menu(self, index: QModelIndex) -> QMenu:
         menu = QMenu(self)
-        if index.isValid():
+        item = self.tree_model.itemFromIndex(index) if index.isValid() else None
+        if item is not None and item.data(ROLE_GROUP) is not None:
+            rename = menu.addAction("グループ名を変更(&R)…")
+            rename.triggered.connect(lambda _checked=False, name=item.data(ROLE_GROUP): self.rename_group(name))
+            menu.addSeparator()
+        elif index.isValid():
             self.tree.setCurrentIndex(index)
-            item = self.tree_model.itemFromIndex(index)
             if item is not None and item.data(ROLE_DRIVE) is not None:
                 self._add_explorer_action(menu, item.data(ROLE_DRIVE), item.data(ROLE_DIR))
                 if not menu.isEmpty():
                     menu.addSeparator()
-            for action in (self.act_rescan, self.act_rename, self.act_drive_info):
+            for action in (self.act_rescan, self.act_rename, self.act_set_group, self.act_drive_info):
                 menu.addAction(action)
             menu.addMenu(self.restore_menu)
             menu.addAction(self.act_remove)
@@ -1255,6 +1293,46 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(self, APP_NAME, f"カタログを保存できません。\n\n{error}")
             return
         self._after_catalog_changed(drive["id"])
+
+    def set_current_drive_group(self) -> None:
+        """表示中のドライブを入れるグループを変える (既存のグループを選ぶか、新しい名前を入力する)。"""
+        drive = self._current_drive()
+        catalog = self.catalog
+        if drive is None or catalog is None:
+            return
+        current = drive.get("group", "")
+        choices = ["", *catalog.group_names()]
+        group, accepted = QInputDialog.getItem(
+            self, "グループを変更",
+            f"「{drive['name']}」を入れるグループ:\n(一覧から選ぶか、新しい名前を入力します。空欄にするとグループから外します)",
+            choices, choices.index(current), True,
+        )  # fmt: skip
+        if accepted and group.strip() != current:
+            self._change_groups(lambda: catalog.set_drive_group(drive["id"], group), drive["id"])
+
+    def rename_group(self, name: str) -> None:
+        catalog = self.catalog
+        if catalog is None:
+            return
+        new_name, accepted = QInputDialog.getText(self, "グループ名を変更", "グループ名:", text=name)
+        new_name = new_name.strip()
+        if not accepted or not new_name or new_name == name:
+            return
+        if new_name in catalog.group_names():
+            answer = QMessageBox.question(self, APP_NAME, f"グループ「{new_name}」は既にあります。1 つにまとめますか?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        if name in self._collapsed_groups:
+            self._collapsed_groups.add(new_name)
+        self._change_groups(lambda: catalog.rename_group(name, new_name), None)
+
+    def _change_groups(self, change, select_drive_id: str | None) -> None:
+        try:
+            change()
+        except (CatalogError, OSError) as error:
+            QMessageBox.critical(self, APP_NAME, f"カタログを保存できません。\n\n{error}")
+            return
+        self._after_catalog_changed(select_drive_id)
 
     def remove_current_drive(self) -> None:
         drive = self._current_drive()

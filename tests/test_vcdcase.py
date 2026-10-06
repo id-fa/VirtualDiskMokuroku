@@ -78,10 +78,10 @@ def test_groups(tmp_path):
         sample.drive("TOP", [sample.record("c.txt", size=3)], comment=b""),
     ])  # fmt: skip
     drives = vcdcase.parse_case(data).drives
-    assert [(drive.label, drive.group, drive.group_comment) for drive in drives] == [
-        ("PART1", ("BACKUP",), "2005/01/02"),
-        ("PART2", ("BACKUP", "内側"), "2005/01/02 / HDS72251"),
-        ("TOP", (), ""),
+    assert [(drive.label, drive.group, drive.group_comments) for drive in drives] == [
+        ("PART1", ("BACKUP",), ("2005/01/02",)),
+        ("PART2", ("BACKUP", "内側"), ("2005/01/02", "HDS72251")),
+        ("TOP", (), ()),
     ]
     assert [[entry.path for entry in drive.entries] for drive in drives] == [["a.txt"], ["d", "d\\b.txt"], ["c.txt"]]
 
@@ -90,11 +90,13 @@ def test_groups(tmp_path):
     catalog = Catalog.create(tmp_path / "groups.vdmoku", cache_root=tmp_path / "cache")
     import_vcdcase(catalog, cas_path)
     part1, part2, top = catalog.drives
-    assert [drive["name"] for drive in catalog.drives] == ["BACKUP / PART1", "BACKUP / 内側 / PART2", "TOP"]
+    assert [drive["name"] for drive in catalog.drives] == ["PART1", "PART2", "TOP"]
     assert (part1["label"], part1["group"], part1["group_comment"]) == ("PART1", "BACKUP", "2005/01/02")
     assert part1["scanned_at"].startswith("2005-01-0")  # ドライブのコメントが空なら、グループのコメントの日付を使う
-    assert (part2["group"], part2["group_comment"]) == ("BACKUP / 内側", "2005/01/02 / HDS72251")
+    # グループは 1 段だけなので、入れ子になっていたドライブは最も外側のグループに入る
+    assert (part2["group"], part2["group_comment"]) == ("BACKUP", "2005/01/02")
     assert "group" not in top and "comment" not in top
+    assert catalog.group_names() == ["BACKUP"]
     with catalog.open_drive_db(part2["id"]) as db:
         assert db.find_path("d\\b.txt").size == 2
 

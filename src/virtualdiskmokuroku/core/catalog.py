@@ -753,6 +753,40 @@ class Catalog:
         del backups[generations:]
         self._rewrite(rename=rename, delete_prefixes=delete_prefixes)
 
+    # ------------------------------------------------------------------ グループ
+    # グループはドライブに付ける名前 (drive["group"]) で、1 段だけ。同じ名前のドライブがツリーでまとめて表示される。
+    # ドライブが 1 台も無いグループは存在しない
+    def group_names(self) -> list[str]:
+        """使われているグループ名(最初に現れた順)。"""
+        return list(dict.fromkeys(drive["group"] for drive in self.drives if drive.get("group")))
+
+    def set_drive_group(self, drive_id: str, group: str | None) -> None:
+        """ドライブをグループに入れる。空文字か ``None`` でグループから外す。"""
+        drive = self.drive(drive_id)
+        group = (group or "").strip()
+        if group == drive.get("group", ""):
+            return
+        drive.pop("group_comment", None)  # 取り込み元のグループのコメントは、グループを変えたら残さない
+        if group:
+            drive["group"] = group
+        else:
+            drive.pop("group", None)
+        self._rewrite()
+
+    def rename_group(self, old_name: str, new_name: str) -> None:
+        """グループ名を変える。既にある名前にすると、そのグループと 1 つにまとまる。"""
+        new_name = new_name.strip()
+        if not new_name:
+            raise CatalogError("グループ名が空です")
+        members = [drive for drive in self.drives if drive.get("group") == old_name]
+        if not members:
+            raise CatalogError(f"グループが見つかりません: {old_name}")
+        if new_name == old_name:
+            return
+        for drive in members:
+            drive["group"] = new_name
+        self._rewrite()
+
     def remove_drive(self, drive_id: str) -> None:
         drive = self.drive(drive_id)
         self.drives.remove(drive)

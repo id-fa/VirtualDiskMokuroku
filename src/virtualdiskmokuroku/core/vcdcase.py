@@ -124,8 +124,8 @@ class CaseDrive:
     media_type: int  # 1 = CD/DVD、8 = ディスク (ほかの値は未確認)
     cluster_size: int
     comment: str  # 既定では登録した日付 ("2026/10/06") が入っている
-    group: tuple[str, ...] = ()  # ドライブがグループ (フォルダ) に入っていた場合の、上位のグループ名
-    group_comment: str = ""  # そのグループのコメント (入れ子なら " / " でつなぐ)
+    group: tuple[str, ...] = ()  # ドライブがグループ (フォルダ) に入っていた場合の、上位のグループ名 (外側から順)
+    group_comments: tuple[str, ...] = ()  # 各グループのコメント (group と同じ並び)
     entries: list[CaseEntry] = field(default_factory=list)
 
 
@@ -334,15 +334,14 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
             child.inner_owner, child.prefix = frame.inner_owner, path + "/"
         elif frame.drive is None:
             if is_drive:
-                child.drive = child.new_drive = CaseDrive(
-                    "", "", "", 0, 0, 0, 0, "", frame.group, " / ".join(frame.group_comments)
-                )
+                child.drive = child.new_drive = CaseDrive("", "", "", 0, 0, 0, 0, "", frame.group, frame.group_comments)
                 child.comment = comment
                 child.media_type = (kind >> _MEDIA_SHIFT) & _MEDIA_MASK
             else:  # ドライブをまとめるグループ
-                group_comment = decode_text(comment)[1].strip()
-                child.group = (*frame.group, name) if name else frame.group
-                child.group_comments = (*frame.group_comments, group_comment) if group_comment else frame.group_comments
+                child.group, child.group_comments = frame.group, frame.group_comments
+                if name:
+                    child.group = (*frame.group, name)
+                    child.group_comments = (*frame.group_comments, decode_text(comment)[1].strip())
         elif name:
             if kind & _KIND_ARCHIVE:
                 # 書庫はフォルダとして記録されているが、サイズ・日時は書庫ファイルのもの。1 つのファイルとして扱う

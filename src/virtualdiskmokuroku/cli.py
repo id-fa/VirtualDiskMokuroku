@@ -108,8 +108,9 @@ def cmd_list(args: argparse.Namespace) -> int:
     if catalog.encrypted:
         print("(暗号化カタログ)")
     for drive in catalog.drives:
+        group = f"{drive['group']} / " if drive.get("group") else ""
         print(
-            f"{drive['name']}  [{drive.get('label', '')} / {drive.get('serial', '')} / {drive.get('filesystem', '')}]  "
+            f"{group}{drive['name']}  [{drive.get('label', '')} / {drive.get('serial', '')} / {drive.get('filesystem', '')}]  "
             f"ファイル {drive.get('file_count', 0):,}  合計 {format_size(drive.get('total_size'))}  "
             f"空き {format_size(drive.get('free_bytes'))} / {format_size(drive.get('total_bytes'))}  "
             f"スキャン {format_iso(drive.get('scanned_at'))} ({drive.get('source', '')})  "

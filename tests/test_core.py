@@ -207,6 +207,44 @@ def test_catalog_password_and_settings(tmp_path):
         Catalog.create(path)
 
 
+def test_drive_groups(tmp_path, scanned):
+    _tree, _files, db_path, result = scanned
+    cache = tmp_path / "cache"
+    catalog_path = tmp_path / "groups.vdmoku"
+    catalog = Catalog.create(catalog_path, cache_root=cache)
+    ids = [catalog.put_drive(db_path, result, name=name)["id"] for name in ("a", "b", "c")]
+    assert catalog.group_names() == []
+
+    catalog.set_drive_group(ids[1], " 写真 ")
+    catalog.set_drive_group(ids[0], "バックアップ")
+    catalog.set_drive_group(ids[2], "写真")
+    assert catalog.group_names() == ["バックアップ", "写真"]  # ドライブの並び順
+    reopened = Catalog.open(catalog_path, cache_root=cache)
+    assert [drive.get("group") for drive in reopened.drives] == ["バックアップ", "写真", "写真"]
+
+    # 既にある名前に変えると 1 つにまとまる
+    reopened.rename_group("写真", "バックアップ")
+    assert reopened.group_names() == ["バックアップ"]
+    with pytest.raises(CatalogError):
+        reopened.rename_group("写真", "別の名前")
+    with pytest.raises(CatalogError):
+        reopened.rename_group("バックアップ", "  ")
+
+    # グループから外す。ドライブを更新 (再スキャン) してもグループは変わらない
+    reopened.set_drive_group(ids[0], None)
+    reopened.put_drive(db_path, result, drive_id=ids[1])
+    again = Catalog.open(catalog_path, cache_root=cache)
+    assert [drive.get("group") for drive in again.drives] == [None, "バックアップ", "バックアップ"]
+    assert len(again.drive(ids[1])["backups"]) == 1
+
+    # 取り込み元のグループのコメントは、グループを変えたら残さない
+    again.drive(ids[1])["group_comment"] = "メモ"
+    again.set_drive_group(ids[1], "バックアップ")  # 変化なし
+    assert again.drive(ids[1])["group_comment"] == "メモ"
+    again.set_drive_group(ids[1], "別のグループ")
+    assert "group_comment" not in again.drive(ids[1]) and again.group_names() == ["別のグループ", "バックアップ"]
+
+
 def test_update_without_backup_drops_stale_context(tmp_path, scanned):
     _tree, _files, db_path, result = scanned
     catalog_path = tmp_path / "test.vdmoku"

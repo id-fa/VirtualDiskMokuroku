@@ -633,3 +633,67 @@ def test_import_vcdcase(window, tmp_path, monkeypatch):
     window.import_vcdcase(str(broken))
     assert dialogs[1].outcome is None and "構造が合いません" in shown_errors[0]
     assert window.tree_model.rowCount() == 4
+
+
+def test_drive_groups(window, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+
+    from virtualdiskmokuroku.ui.main_window import ROLE_DRIVE, ROLE_GROUP
+
+    assert wait_until(lambda: len(names(window)) == 7)
+    one, two = [drive["id"] for drive in window.catalog.drives]
+    assert window._current_drive()["id"] == one
+
+    # 表示中のドライブを新しいグループに入れる → ツリーにグループの行ができ、その下にドライブが入る
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *args, **kwargs: ("バックアップ", True))
+    window.set_current_drive_group()
+    assert window.catalog.drive(one)["group"] == "バックアップ"
+    assert window.tree_model.rowCount() == 2
+    group_item = window.tree_model.item(0)
+    assert (group_item.text(), group_item.data(ROLE_GROUP), group_item.data(ROLE_DRIVE)) == ("バックアップ", "バックアップ", None)
+    assert group_item.rowCount() == 1 and group_item.child(0).data(ROLE_DRIVE) == one
+    assert window.tree.isExpanded(group_item.index())
+    assert window.tree_model.item(1).data(ROLE_DRIVE) == two
+    assert wait_until(lambda: len(names(window)) == 7)
+    assert window.tree_model.itemFromIndex(window.tree.currentIndex()).data(ROLE_DRIVE) == one
+
+    # グループの行を選んでも一覧は変わらない。右クリックメニューはグループ名の変更
+    location = window._location
+    window.tree.setCurrentIndex(group_item.index())
+    assert window._location == location and not window.tree.selectionModel().isSelected(group_item.index())
+    group_menu = [item.text() for item in window._build_tree_menu(group_item.index()).actions() if item.text()]
+    assert group_menu[0].startswith("グループ名を変更") and window.act_rename.text() not in group_menu
+    assert window.act_set_group in window._build_tree_menu(group_item.child(0).index()).actions()
+
+    # 一覧でフォルダへ移動すると、グループの下のツリーも追従する
+    window._on_table_double_clicked(window.table_model.index(0, 0))
+    wait_names(window, ["sub", "readme.md"])
+    current = window.tree_model.itemFromIndex(window.tree.currentIndex())
+    assert current.text() == "docs" and current.parent().parent().data(ROLE_GROUP) == "バックアップ"
+
+    # グループ名を変更。折りたたんだ状態は、ツリーを作り直しても保たれる
+    window.navigate(two, 0)
+    window.tree.collapse(window.tree_model.item(0).index())
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("保管", True))
+    window.rename_group("バックアップ")
+    group_item = window.tree_model.item(0)
+    assert group_item.text() == "保管" and not window.tree.isExpanded(group_item.index())
+    assert window._current_drive()["id"] == two
+
+    # もう 1 台も同じグループへ (既存のグループを選ぶ) → 最上位はグループだけになり、選択中のドライブが見えるよう展開される
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *args, **kwargs: ("保管", True))
+    window.set_current_drive_group()
+    group_item = window.tree_model.item(0)
+    assert window.tree_model.rowCount() == 1 and group_item.rowCount() == 2
+    assert window.tree.isExpanded(group_item.index())
+    assert window.tree_model.itemFromIndex(window.tree.currentIndex()).data(ROLE_DRIVE) == two
+
+    # 空欄にするとグループから外れる。開き直しても同じ構成になる
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *args, **kwargs: ("", True))
+    window.set_current_drive_group()
+    assert "group" not in window.catalog.drive(two)
+    assert [window.tree_model.item(row).data(ROLE_GROUP) for row in range(window.tree_model.rowCount())] == ["保管", None]
+    path = window.catalog.path
+    assert window.open_catalog(path)
+    assert [window.tree_model.item(row).data(ROLE_GROUP) for row in range(window.tree_model.rowCount())] == ["保管", None]
+    assert window.tree_model.item(0).child(0).data(ROLE_DRIVE) == one

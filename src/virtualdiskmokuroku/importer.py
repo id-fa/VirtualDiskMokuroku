@@ -150,7 +150,10 @@ def _build_drive(
         total_bytes=drive.total_bytes if has_volume else None,
         free_bytes=drive.free_bytes if has_volume else None,
     )
-    scanned_at = _registered_at(drive.comment) or _registered_at(drive.group_comment) or file_time
+    # グループは 1 段だけなので、入れ子になっていた場合は最も外側のグループに入れる
+    group = drive.group[0] if drive.group else ""
+    group_comment = drive.group_comments[0] if drive.group_comments else ""
+    scanned_at = _registered_at(drive.comment) or _registered_at(group_comment) or file_time
     meta = {f"volume_{key}": value for key, value in volume.to_dict().items()}
     meta.update(
         scanned_at=scanned_at,
@@ -180,15 +183,12 @@ def _build_drive(
         raise
 
     result = ScanResult(IMPORT_ROOT, SOURCE_VCDCASE, stats, volume, scanned_at, meta)
-    name = " / ".join((*drive.group, drive.label or "(名前なし)"))
     extra = {
         key: value
-        for key, value in (
-            ("comment", drive.comment), ("group", " / ".join(drive.group)), ("group_comment", drive.group_comment),
-        )
+        for key, value in (("comment", drive.comment), ("group", group), ("group_comment", group_comment))
         if value
-    }  # fmt: skip
-    return NewDrive(database, result, name, context_db, extra), context_count
+    }
+    return NewDrive(database, result, drive.label or "(名前なし)", context_db, extra), context_count
 
 
 def _build_context_db(
