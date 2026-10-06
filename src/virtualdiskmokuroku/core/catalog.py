@@ -30,7 +30,7 @@ from .drive_db import DriveDB
 from .errors import CatalogError, PasswordError
 from .ignore import DEFAULT_IGNORE
 from .scanner import ScanResult
-from .volume import VolumeInfo
+from .volume import VolumeInfo, list_volumes
 
 CATALOG_EXTENSION = ".vdmoku"
 LEGACY_CATALOG_EXTENSIONS = (".pmcat",)  # 旧名 PyMediaCatalogue 時代の拡張子(開くことはできる)
@@ -218,6 +218,33 @@ class Catalog:
         # シリアルが同じものが複数ある場合(複製ディスクなど)はラベル一致を優先
         exact = [drive for drive in matches if drive.get("label") == volume.label]
         return exact or matches
+
+    def connected_root(self, drive_id: str) -> str | None:
+        """登録済みドライブと同じボリュームがいま接続されていれば、その現在の場所を返す。
+
+        判定はスキャン時と同じくシリアル・ファイルシステム(複数あればラベル)で行うので、ドライブレターが
+        変わっていても見つかる。戻り値はスキャンルートに対応する現在のパス("G:\\" など)。未接続なら None。
+        """
+        drive = self.drive(drive_id)
+        serial = drive.get("serial")
+        if not serial:
+            return None
+        scan_drive, scan_sub = os.path.splitdrive(drive.get("root", ""))
+        candidates = [
+            volume
+            for volume in list_volumes(include_device=False)
+            if volume.ready and volume.serial == serial and volume.filesystem == drive.get("filesystem")
+        ]
+        if not candidates:
+            return None
+
+        def preference(volume: VolumeInfo) -> tuple[bool, bool]:
+            # ラベルが一致するもの、次にスキャン時と同じドライブレターのものを優先
+            return (volume.label != drive.get("label"), volume.root[:2].casefold() != scan_drive.casefold())
+
+        root = min(candidates, key=preference).root
+        sub_path = scan_sub.strip("\\")
+        return root + sub_path if sub_path else root
 
     # ------------------------------------------------------------------ 設定
     def save(self) -> None:

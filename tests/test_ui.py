@@ -253,6 +253,71 @@ def test_cancel_during_context_registers_partial_results(window, tmp_path):
     window._after_catalog_changed(drive["id"])
 
 
+def test_open_folder_in_explorer(window, tmp_path, monkeypatch):
+    import shutil
+
+    from PySide6.QtWidgets import QMessageBox
+
+    label = "このフォルダをエクスプローラで開く"
+
+    def explorer_action(menu):
+        return next((item for item in menu.actions() if item.text().startswith(label)), None)
+
+    opened, warnings = [], []
+    monkeypatch.setattr(os, "startfile", opened.append, raising=False)
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, _title, text, *args: warnings.append(text))
+
+    wait_names(window, ["docs", "docs.old", "empty", "music", "a.txt", "only_in_one.txt", "Zeta.bin"])
+    drive = window.catalog.drives[0]
+    tree_root = str(tmp_path / "one")
+    # テスト用ツリーは接続中のボリューム上にあるので「同じドライブが接続されている」と判定される
+    assert os.path.samefile(window.catalog.connected_root(drive["id"]), tree_root)
+
+    # 選択なし → 表示中のフォルダ
+    window.table.clearSelection()
+    explorer_action(window._build_table_menu()).trigger()
+    assert os.path.samefile(opened[-1], tree_root)
+
+    # フォルダ行を選択 → そのフォルダ / ファイル行を選択 → 格納フォルダ
+    window.table.selectRow(names(window).index("docs"))
+    explorer_action(window._build_table_menu()).trigger()
+    assert os.path.samefile(opened[-1], os.path.join(tree_root, "docs"))
+    window.table.selectRow(names(window).index("a.txt"))
+    explorer_action(window._build_table_menu()).trigger()
+    assert os.path.samefile(opened[-1], tree_root)
+
+    # 検索結果のファイル行 → そのファイルがあるフォルダ
+    window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_SUBTREE))
+    window.filter_edit.setText("deep")
+    wait_names(window, ["deep.txt"])
+    window.table.selectRow(0)
+    explorer_action(window._build_table_menu()).trigger()
+    assert os.path.samefile(opened[-1], os.path.join(tree_root, "docs", "sub"))
+    window.filter_edit.setText("")
+    wait_until(lambda: len(names(window)) == 7)
+
+    # ツリーのフォルダを右クリック
+    drive_item = window.tree_model.item(0)
+    window.tree.setExpanded(drive_item.index(), True)
+    music = next(drive_item.child(row) for row in range(drive_item.rowCount()) if drive_item.child(row).text() == "music")
+    explorer_action(window._build_tree_menu(music.index())).trigger()
+    assert os.path.samefile(opened[-1], os.path.join(tree_root, "music"))
+    assert not warnings
+
+    # カタログにはあるが実際には無くなったフォルダ → 開かずにエラー表示
+    shutil.rmtree(os.path.join(tree_root, "music"))
+    count = len(opened)
+    explorer_action(window._build_tree_menu(music.index())).trigger()
+    assert len(opened) == count and len(warnings) == 1 and "見つかりません" in warnings[0]
+
+    # 同じドライブが接続されていない (別のボリューム) → メニューに出さない
+    drive["serial"] = "0000-0000"
+    assert window.catalog.connected_root(drive["id"]) is None
+    assert explorer_action(window._build_tree_menu(drive_item.index())) is None
+    window.table.clearSelection()
+    assert explorer_action(window._build_table_menu()) is None
+
+
 def test_limit_and_drive_management(window):
     window.app_settings.result_limit = 3
     window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_SUBTREE))

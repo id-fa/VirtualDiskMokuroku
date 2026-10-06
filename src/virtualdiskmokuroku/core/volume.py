@@ -134,8 +134,11 @@ def _device_descriptor(root: str) -> dict:
         _kernel32.CloseHandle(handle)
 
 
-def get_volume_info(root: str) -> VolumeInfo:
-    """ドライブルート (または配下のパス) のボリューム情報を取得する。"""
+def get_volume_info(root: str, include_device: bool = True) -> VolumeInfo:
+    """ドライブルート (または配下のパス) のボリューム情報を取得する。
+
+    ``include_device=False`` ならデバイス情報(モデル名など)の問い合わせを省く(同定だけしたいとき用)。
+    """
     root = drive_root(root)
     info = VolumeInfo(root=root)
     # メディア未挿入のドライブでシステムのエラーダイアログを出さない
@@ -170,7 +173,7 @@ def get_volume_info(root: str) -> VolumeInfo:
             info.total_bytes = total.value
             info.free_bytes = total_free.value
 
-        if info.drive_type != "remote":
+        if include_device and info.drive_type != "remote":
             for key, value in _device_descriptor(root).items():
                 setattr(info, key, value)
     finally:
@@ -178,5 +181,5 @@ def get_volume_info(root: str) -> VolumeInfo:
     return info
 
 
-def list_volumes() -> list[VolumeInfo]:
-    return [get_volume_info(root) for root in list_drive_roots()]
+def list_volumes(include_device: bool = True) -> list[VolumeInfo]:
+    return [get_volume_info(root, include_device) for root in list_drive_roots()]

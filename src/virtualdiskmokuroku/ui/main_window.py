@@ -786,7 +786,7 @@ class MainWindow(QMainWindow):
         if row is not None:
             self.navigate(row.drive_id, row.entry.parent_id, select_entry=row.entry.id)
 
-    def _show_table_menu(self, position) -> None:
+    def _build_table_menu(self) -> QMenu:
         menu = QMenu(self)
         has_selection = bool(self.table.selectionModel().selectedRows())
         for item in (self.act_copy_names, self.act_copy_paths):
@@ -795,12 +795,62 @@ class MainWindow(QMainWindow):
         if self._spec is not None and self._spec.effective_scope != SCOPE_FOLDER:
             self.act_open_location.setEnabled(has_selection)
             menu.addAction(self.act_open_location)
+
+        # 選択行がフォルダならそのフォルダ、ファイルならその格納フォルダ、選択なしなら表示中のフォルダを開く
+        row = self.table_model.row_at(self.table.currentIndex()) if has_selection else None
+        if row is not None:
+            self._add_explorer_action(menu, row.drive_id, row.entry.id if row.entry.is_dir else row.entry.parent_id)
+        elif self._location is not None:
+            self._add_explorer_action(menu, *self._location)
+
         menu.addSeparator()
         menu.addAction(self.act_select_all)
         menu.addAction(self.act_export)
-        menu.exec(self.table.viewport().mapToGlobal(position))
+        return menu
+
+    def _show_table_menu(self, position) -> None:
+        self._build_table_menu().exec(self.table.viewport().mapToGlobal(position))
         for item in (self.act_copy_names, self.act_copy_paths):
             item.setEnabled(True)
+
+    # ================================================================== エクスプローラ連携
+    def _connected_folder(self, drive_id: str, dir_id: int) -> str | None:
+        """カタログ上のフォルダに対応する実際のパス。同じドライブが接続されていなければ None。"""
+        if self.catalog is None:
+            return None
+        try:
+            root = self.catalog.connected_root(drive_id)
+            if root is None:
+                return None
+            rel_path = self._db(drive_id).dir_path(dir_id)
+        except (CatalogError, OSError):
+            return None
+        if not rel_path:
+            return root
+        return root + rel_path if root.endswith("\\") else f"{root}\\{rel_path}"
+
+    def _add_explorer_action(self, menu: QMenu, drive_id: str, dir_id: int) -> None:
+        """同じドライブが接続されているときだけ「エクスプローラで開く」をメニューに加える。"""
+        folder = self._connected_folder(drive_id, dir_id)
+        if folder is None:
+            return
+        item = menu.addAction("このフォルダをエクスプローラで開く(&X)")
+        item.setToolTip(folder)
+        item.triggered.connect(lambda _checked=False, target=folder: self.open_in_explorer(target))
+
+    def open_in_explorer(self, folder: str) -> None:
+        if not os.path.isdir(folder):
+            QMessageBox.warning(
+                self, APP_NAME,
+                f"フォルダが見つかりません。\n\n{folder}\n\n"
+                "カタログ作成後に移動・削除されたか、名前が変更された可能性があります。"
+                "ドライブを更新 (再スキャン) するとカタログが現在の内容になります。",
+            )  # fmt: skip
+            return
+        try:
+            os.startfile(folder)
+        except OSError as error:
+            QMessageBox.warning(self, APP_NAME, f"エクスプローラで開けません。\n\n{folder}\n\n{error}")
 
     def copy_names(self) -> None:
         if not self.table.hasFocus() and QApplication.focusWidget() not in (None, self.table):
@@ -883,18 +933,25 @@ class MainWindow(QMainWindow):
             return None
         return self.catalog.drive(self._location[0])
 
-    def _show_tree_menu(self, position) -> None:
-        index = self.tree.indexAt(position)
+    def _build_tree_menu(self, index: QModelIndex) -> QMenu:
         menu = QMenu(self)
         if index.isValid():
             self.tree.setCurrentIndex(index)
-            for item in (self.act_rescan, self.act_rename, self.act_drive_info):
-                menu.addAction(item)
+            item = self.tree_model.itemFromIndex(index)
+            if item is not None and item.data(ROLE_DRIVE) is not None:
+                self._add_explorer_action(menu, item.data(ROLE_DRIVE), item.data(ROLE_DIR))
+                if not menu.isEmpty():
+                    menu.addSeparator()
+            for action in (self.act_rescan, self.act_rename, self.act_drive_info):
+                menu.addAction(action)
             menu.addMenu(self.restore_menu)
             menu.addAction(self.act_remove)
             menu.addSeparator()
         menu.addAction(self.act_scan)
-        menu.exec(self.tree.viewport().mapToGlobal(position))
+        return menu
+
+    def _show_tree_menu(self, position) -> None:
+        self._build_tree_menu(self.tree.indexAt(position)).exec(self.tree.viewport().mapToGlobal(position))
 
     def scan_drive(self, target_drive_id: str | None = None) -> None:
         if self.catalog is None:
