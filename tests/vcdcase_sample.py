@@ -24,14 +24,14 @@ def cstring(data: bytes) -> bytes:
 
 
 def record(name, *, attrs=FILE, size=0, mtime=FILETIME_2021, ctime=0, comment=b"", properties=(), children=(),
-           crc=None, archive_type=0, packed=None, lead=None):  # fmt: skip
+           crc=None, archive_type=0, packed=None, lead=None, extra=b""):  # fmt: skip
     if isinstance(name, str):
         name = name.encode("cp932")
     data = struct.pack("<IQIH3Q", attrs if lead is None else lead, size, attrs, archive_type, 0, mtime, ctime)
     data += cstring(name) + b"\x02" + cstring(comment) + b"\x00"
     data += bytes([len(properties)]) + b"".join(cstring(item) for item in properties)
     if properties:
-        data += b"\x00"
+        data += cstring(extra)  # プロパティの数には含まれない、最後の文字列
     data += bytes(7) + struct.pack("<HII", crc is not None, crc or 0, len(children)) + b"".join(children)
     if attrs & KIND_MEMBER:
         data += struct.pack("<IB", size // 2 if packed is None else packed, 0)
@@ -80,7 +80,11 @@ PDF_PROPERTIES = (
     b"PDF-P", "報告書".encode("cp932"), b"", b"", "山田".encode("cp932"), b"Writer", b"Distiller 5.0",
     b"20020808133904+09'00'", b"20020808134635+09'00'", b"53", b"", b"", b"",
 )  # fmt: skip
-LONG_COMMENT = ("とても長いコメント。" * 40).encode("cp932")  # 255 バイトを超える文字列
+AUDIO_PROPERTIES = (
+    b"Audio", "番組名".encode("cp932"), b"", b"2003/08/28 TBS", b"RiffSIF", b"capt by camn.", b"", b"VirtualDubMod 1.4.13",
+    b"", b"", b"2003-08-02", b"", b"", b"", b"capt by camn.", b"", b"", b"TBS", b"", b"", b"", b"",
+)  # fmt: skip
+LONG_COMMENT =("とても長いコメント。" * 40).encode("cp932")  # 255 バイトを超える文字列
 README_CRC = 0xE2310CA8
 
 
@@ -112,6 +116,7 @@ def sample_case() -> bytes:
                 size=3000, crc=0x0BADF00D,
             ),  # fmt: skip
             record("memo.txt", size=10, comment=LONG_COMMENT),
+            record("tv.avi", size=7000, properties=AUDIO_PROPERTIES, extra=b"CATV / MPEG1"),
         ],
     )
     floppy = drive(

@@ -599,7 +599,7 @@ def test_import_vcdcase(window, tmp_path, monkeypatch):
 
     # 追加されたドライブへ移動している
     assert window.tree_model.rowCount() == 4
-    wait_names(window, ["写真", "data.lzh", "memo.txt", "readme.txt", "setup.exe"])
+    wait_names(window, ["写真", "data.lzh", "memo.txt", "readme.txt", "setup.exe", "tv.avi"])
     assert window.address.text() == "?:\\"
     assert window._current_drive()["name"] == "BACKUP_2003"
 

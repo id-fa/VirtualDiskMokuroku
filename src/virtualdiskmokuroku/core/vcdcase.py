@@ -11,7 +11,8 @@ CSV エクスポートと突き合わせて分かった構造で、意味の分�
     ヘッダ    FF FF, スキーマ (u16), クラス名の長さ (u16), "CCDCase", 不明 12 バイト
     レコード  属性 (u32), サイズ (u64), 属性 (u32。同じ値), 書庫の種類 (u16), アクセス・更新・作成日時 (u64 × 3), 名前,
               文字列の数 (u8。常に 2) とその文字列 (コメント, 不明),
-              プロパティの数 (u8) とその文字列 (先頭は "HTML" "MODULE" などの種類。1 つ以上あれば直後に 1 バイト),
+              プロパティの数 (u8) とその文字列 (先頭は "HTML" "MODULE" などの種類。1 つ以上あれば、数に含まれない
+              文字列がもう 1 つ続く),
               不明 7 バイト, CRC の有無 (u16), CRC32 (u32), 子の数 (u32), 子レコード…,
               書庫内のエントリなら 圧縮後のサイズ (u32), 不明 1 バイト,
               ドライブなら ラベル, 不明の文字列, シリアル (u32), ファイルシステム, 容量 (u64), 空き (u64),
@@ -72,7 +73,12 @@ _PROPERTY_KEYS: dict[str, dict[int, str]] = {
     "HTML": {1: "title", 2: "subject", 3: "keywords", 5: "application"},
     "MODULE": {
         1: "file_version", 2: "product_version", 3: "target_os", 4: "module_type", 5: "comments",
-        6: "company", 7: "description", 8: "copyright", 10: "product_name",
+        6: "company", 7: "description", 8: "copyright", 9: "trademarks", 10: "product_name",
+    },
+    # AVI などの RIFF の INFO チャンク。14 は 5 と同じ値が入っている
+    "Audio": {
+        1: "title", 3: "artist", 4: "tag_format", 5: "comments", 7: "application", 10: "created",
+        14: "comments", 17: "copyright", 22: "source",
     },
     "PDF-P": {
         1: "title", 2: "subject", 3: "keywords", 4: "author", 5: "creator", 6: "application",
@@ -229,7 +235,8 @@ def property_items(properties: list[bytes]) -> list[tuple[str, str]]:
             match = _PDF_DATE.match(value)  # PDF の日付 "20020808133904+09'00'"
             if match is not None:
                 value = "{}/{}/{} {}:{}:{}".format(*match.groups())
-        items.append((key, value))
+        if (key, value) not in items:
+            items.append((key, value))
     return items
 
 
@@ -277,7 +284,7 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
         strings = [reader.string() for _ in range(reader.byte())]
         properties = [_raw(reader.string()) for _ in range(reader.byte())]
         if properties:
-            reader.byte()
+            properties.append(_raw(reader.string()))
         reader.take(_RECORD_UNKNOWN)
         has_crc, crc, children = reader.unpack(_RECORD_TAIL)
         if children * _MIN_RECORD_SIZE > data_size - reader.pos:

@@ -33,7 +33,7 @@ def test_parse_case():
     assert backup.comment == "2003/04/05"
     entries = {entry.path: entry for entry in backup.entries}
     assert list(entries) == [
-        "readme.txt", "setup.exe", "写真", "写真\\index.html", "写真\\海.jpg", "写真\\空のフォルダ", "data.lzh", "memo.txt",
+        "readme.txt", "setup.exe", "写真", "写真\\index.html", "写真\\海.jpg", "写真\\空のフォルダ", "data.lzh", "memo.txt", "tv.avi",
     ]  # fmt: skip
     readme = entries["readme.txt"]
     assert (readme.is_dir, readme.size, readme.mtime, readme.ctime) == (False, 120, sample.FILETIME_2021, sample.FILETIME_2003)
@@ -83,6 +83,14 @@ def test_decode_text_and_properties():
     ]  # fmt: skip
     module = dict(vcdcase.property_items(list(sample.MODULE_PROPERTIES)))
     assert module["file_version"] == "1.2.3.4" and module["company"] == "サンプル社" and module["product_name"] == "Sample Suite"
+    # プロパティの数に含まれない最後の文字列 (AVI ではソース) も読む。同じ値の繰り返しは 1 つにまとめる
+    avi = next(entry for entry in vcdcase.parse_case(sample.sample_case()).drives[0].entries if entry.path == "tv.avi")
+    assert len(avi.properties) == len(sample.AUDIO_PROPERTIES) + 1
+    assert vcdcase.property_items(avi.properties) == [
+        ("property_type", "Audio"), ("title", "番組名"), ("artist", "2003/08/28 TBS"), ("tag_format", "RiffSIF"),
+        ("comments", "capt by camn."), ("application", "VirtualDubMod 1.4.13"), ("created", "2003-08-02"),
+        ("copyright", "TBS"), ("source", "CATV / MPEG1"),
+    ]  # fmt: skip
     # 並びの分からない種類は、値だけを取り込む
     assert vcdcase.property_items([b"MP3", b"", b"Artist"]) == [("property_type", "MP3"), ("property", "Artist")]
     assert vcdcase.property_items([]) == []
@@ -127,7 +135,7 @@ def check_imported(catalog):
     assert (backup["name"], backup["label"], backup["serial"], backup["filesystem"]) == ("BACKUP_2003", "BACKUP_2003", "1A2B-3C4D", "CDFS")
     assert (backup["root"], backup["source"], backup["drive_type"]) == (IMPORT_ROOT, SOURCE_VCDCASE, "cdrom")
     assert (backup["total_bytes"], backup["free_bytes"]) == (700_000_000, 0)
-    assert (backup["file_count"], backup["dir_count"], backup["total_size"]) == (6, 2, 120 + 4096 + 900 + 50_000 + 3000 + 10)
+    assert (backup["file_count"], backup["dir_count"], backup["total_size"]) == (7, 2, 120 + 4096 + 900 + 50_000 + 3000 + 10 + 7000)
     assert backup["scanned_at"].startswith("2003-04-0") and backup["has_context"] and backup["comment"] == "2003/04/05"
     assert (floppy["name"], floppy["label"], floppy["serial"], floppy["drive_type"]) == ("フロッピー 12", "フロッピー 12", "", "unknown")
     assert floppy["comment"] == "友人から借りたディスク" and not floppy["has_context"]
@@ -135,7 +143,7 @@ def check_imported(catalog):
 
     with catalog.open_drive_db(backup["id"]) as db, ContextDB(catalog.context_source(backup["id"])) as context:
         assert db.root == IMPORT_ROOT and db.meta["source"] == SOURCE_VCDCASE
-        assert [entry.name for entry in db.children(ROOT_ID)] == ["写真", "data.lzh", "memo.txt", "readme.txt", "setup.exe"]
+        assert [entry.name for entry in db.children(ROOT_ID)] == ["写真", "data.lzh", "memo.txt", "readme.txt", "setup.exe", "tv.avi"]
         photos = db.find_path("写真")
         assert (photos.is_dir, photos.size, photos.file_count, photos.dir_count) == (1, 50_900, 2, 1)
         sea = db.find_path("写真\\海.jpg")
@@ -169,7 +177,8 @@ def check_imported(catalog):
         assert context.search_entry_ids(["旅行"]) == [photos.id]
         assert context.search_entry_ids(["Sample", "Suite"]) == [setup.id]
         assert context.search_entry_ids(["manual"]) == [archive.id]
-        assert context.summary() == {"vcdcase": 6}
+        assert ("vcdcase", "source", "CATV / MPEG1") in context.get_meta(db.find_path("tv.avi").id)
+        assert context.summary() == {"vcdcase": 7}
 
     with catalog.open_drive_db(floppy["id"]) as db:
         assert [entry.name for entry in db.children(ROOT_ID)] == ["AUTOEXEC.BAT"]
@@ -185,7 +194,7 @@ def test_import_into_catalog(cas_path, tmp_path, monkeypatch):
     outcome = import_vcdcase(catalog, cas_path, progress=lambda phase, count: phases.append((phase, count)))
     assert phases == [("import_total", 2), ("import", 1), ("import", 2), ("save", 0)]
     assert [drive["name"] for drive in outcome.drives] == ["BACKUP_2003", "フロッピー 12"]
-    assert (outcome.file_count, outcome.dir_count, outcome.context_count) == (7, 2, 6)
+    assert (outcome.file_count, outcome.dir_count, outcome.context_count) == (8, 2, 7)
     assert os.listdir(temp_dir) == []  # 作業フォルダは片付ける
 
     reopened = Catalog.open(catalog.path, cache_root=tmp_path / "cache")
