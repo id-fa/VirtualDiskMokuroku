@@ -1315,6 +1315,9 @@ class MainWindow(QMainWindow):
         lines = [self._drive_tooltip(drive)]
         lines.append(f"容量: {format_size(drive.get('total_bytes'))}    空き: {format_size(drive.get('free_bytes'))} (スキャン時点)")
         lines.append(f"取得元: {_SOURCE_NAMES.get(drive.get('source', ''), '直接走査')}")
+        if drive.get("group"):
+            group_comment = f" ({drive['group_comment']})" if drive.get("group_comment") else ""
+            lines.append(f"グループ: {drive['group']}{group_comment}")
         if drive.get("comment"):
             lines.append(f"コメント: {drive['comment']}")
         context = "なし"

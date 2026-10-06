@@ -67,6 +67,38 @@ def test_parse_case():
     ]  # fmt: skip
 
 
+def test_groups(tmp_path):
+    """ドライブをグループ (フォルダ) にまとめたカタログ。グループにもドライブと同じ形式の情報が続く。"""
+    data = sample.case_file([
+        sample.group("BACKUP", [
+            sample.drive("PART1", [sample.record("a.txt", size=1)], comment=b""),
+            sample.group("内側", [sample.drive("PART2", [sample.folder("d", [sample.record("b.txt", size=2)])])], comment=b"HDS72251"),
+        ], comment=b"2005/01/02"),
+        sample.group("空のグループ", []),
+        sample.drive("TOP", [sample.record("c.txt", size=3)], comment=b""),
+    ])  # fmt: skip
+    drives = vcdcase.parse_case(data).drives
+    assert [(drive.label, drive.group, drive.group_comment) for drive in drives] == [
+        ("PART1", ("BACKUP",), "2005/01/02"),
+        ("PART2", ("BACKUP", "内側"), "2005/01/02 / HDS72251"),
+        ("TOP", (), ""),
+    ]
+    assert [[entry.path for entry in drive.entries] for drive in drives] == [["a.txt"], ["d", "d\\b.txt"], ["c.txt"]]
+
+    cas_path = tmp_path / "groups.cas"
+    cas_path.write_bytes(data)
+    catalog = Catalog.create(tmp_path / "groups.vdmoku", cache_root=tmp_path / "cache")
+    import_vcdcase(catalog, cas_path)
+    part1, part2, top = catalog.drives
+    assert [drive["name"] for drive in catalog.drives] == ["BACKUP / PART1", "BACKUP / 内側 / PART2", "TOP"]
+    assert (part1["label"], part1["group"], part1["group_comment"]) == ("PART1", "BACKUP", "2005/01/02")
+    assert part1["scanned_at"].startswith("2005-01-0")  # ドライブのコメントが空なら、グループのコメントの日付を使う
+    assert (part2["group"], part2["group_comment"]) == ("BACKUP / 内側", "2005/01/02 / HDS72251")
+    assert "group" not in top and "comment" not in top
+    with catalog.open_drive_db(part2["id"]) as db:
+        assert db.find_path("d\\b.txt").size == 2
+
+
 def test_decode_text_and_properties():
     assert vcdcase.decode_text(b"plain") == ("cp932", "plain")
     assert vcdcase.decode_text("日本語".encode("cp932")) == ("cp932", "日本語")

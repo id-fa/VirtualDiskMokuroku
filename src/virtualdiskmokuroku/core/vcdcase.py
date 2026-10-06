@@ -15,17 +15,20 @@ CSV エクスポートと突き合わせて分かった構造で、意味の分�
               文字列がもう 1 つ続く),
               不明 7 バイト, CRC の有無 (u16), CRC32 (u32), 子の数 (u32), 子レコード…,
               書庫内のエントリなら 圧縮後のサイズ (u32), 不明 1 バイト,
-              ドライブなら ラベル, 不明の文字列, シリアル (u32), ファイルシステム, 容量 (u64), 空き (u64),
+              ドライブかグループなら ラベル, 不明の文字列, シリアル (u32), ファイルシステム, 容量 (u64), 空き (u64),
                            短いラベル, クラスタあたりのセクタ数 (u32), セクタサイズ (u32)
 
 属性の下位は Windows のファイル属性で、上位バイトが種別を表す::
 
-    0x20  カタログ自身 (先頭のレコード。その子がドライブ)
+    0x20  カタログ自身 (先頭のレコード。その子がドライブかグループ)
     0x10  ドライブ。下位 4 ビットはメディアの種類 (1 = CD/DVD、8 = ディスク)。名前は空
     0x40  中身を展開して登録した書庫 (フォルダ属性が立ち、子に中身を持つ)。書庫の種類は 1 = LZH, 2 = ZIP, 6 = RAR など
     0x80  書庫内のエントリ (書庫内のフォルダは 0xC0)
 
-ドライブレターは記録されていない。日時は 0 のほか、範囲外の値が入っていることがある (どちらも「不明」)。
+ドライブをまとめるグループ (フォルダ) は、属性に 0x00200000 が立つ名前付きのレコードで、子にドライブを持つ。
+ドライブと同じ形式の情報が後ろに続くが、中身はグループ名だけで、容量と空きは全ビット 1 になっている。
+
+ドライブレターは記録されていない。日時は 0 のほか、1970 年より前や範囲外の値が入っていることがある (いずれも「不明」)。
 コメントやプロパティは、Virtual CD-ROM Case がファイルから読んだバイト列のまま入っている
 (UTF-8 の HTML のタイトルは UTF-8 のまま) ので、``decode_text`` で文字コードを推定して読む。
 """
@@ -62,9 +65,11 @@ _MIN_RECORD_SIZE = _RECORD_HEAD.size + 3 + _RECORD_UNKNOWN + _RECORD_TAIL.size
 _KIND_MEMBER = 0x80000000
 _KIND_ARCHIVE = 0x40000000
 _KIND_DRIVE = 0x10000000
+_KIND_GROUP = 0x00200000
 _MEDIA_SHIFT, _MEDIA_MASK = 24, 0x0F
-_ATTRIBUTE_MASK = 0x00FFFFFF
+_ATTRIBUTE_MASK = 0x00FFFFFF & ~_KIND_GROUP
 _FILE_ATTRIBUTE_DIRECTORY = 0x10
+_MIN_FILETIME = 116444736000000000  # 1970-01-01。これより前は Virtual CD-ROM Case でも「不明」と表示される
 _MAX_FILETIME = 2650467743999999999  # 9999-12-31
 _CANCEL_CHECK_INTERVAL = 20000
 
@@ -119,7 +124,8 @@ class CaseDrive:
     media_type: int  # 1 = CD/DVD、8 = ディスク (ほかの値は未確認)
     cluster_size: int
     comment: str  # 既定では登録した日付 ("2026/10/06") が入っている
-    group: tuple[str, ...] = ()  # ドライブがフォルダ分けされていた場合の、上位の名前
+    group: tuple[str, ...] = ()  # ドライブがグループ (フォルダ) に入っていた場合の、上位のグループ名
+    group_comment: str = ""  # そのグループのコメント (入れ子なら " / " でつなぐ)
     entries: list[CaseEntry] = field(default_factory=list)
 
 
@@ -135,13 +141,14 @@ class _Frame:
     """読みかけの親レコード。"""
 
     remaining: int  # まだ読んでいない子の数
-    is_drive: bool = False  # 子の後ろにドライブ情報が続く
+    has_info: bool = False  # 子の後ろにドライブ情報が続く (ドライブとグループ)
     is_member: bool = False  # 子の後ろに書庫内エントリの情報が続く
     media_type: int = 0
     new_drive: CaseDrive | None = None  # このレコードで始まったドライブ (ドライブ情報の書き込み先)
     drive: CaseDrive | None = None  # 子が属するドライブ
     comment: bytes = b""
     group: tuple[str, ...] = ()
+    group_comments: tuple[str, ...] = ()
     prefix: str = ""  # 子のパスの前に付ける文字列
     inner_owner: CaseEntry | None = None  # 書庫の中を読んでいる場合、その書庫のエントリ
 
@@ -198,7 +205,7 @@ def _raw(value: bytes | str) -> bytes:
 
 
 def _filetime(value: int) -> int | None:
-    return value if 0 < value <= _MAX_FILETIME else None
+    return value if _MIN_FILETIME <= value <= _MAX_FILETIME else None
 
 
 def decode_text(raw: bytes) -> tuple[str, str]:
@@ -304,7 +311,7 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
             stack.pop()
             if frame.is_member:
                 reader.unpack(_MEMBER_TAIL)
-            if frame.is_drive:
+            if frame.has_info:
                 _read_drive_info(reader, frame, encoding)
                 if frame.new_drive is not None:
                     case.drives.append(frame.new_drive)
@@ -313,9 +320,10 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
         size, kind, archive_type, mtime, ctime, raw_name, comment, properties, crc, children = read_record()
         name = _text(raw_name, encoding)
         is_drive = bool(kind & _KIND_DRIVE)
+        has_info = bool(kind & (_KIND_DRIVE | _KIND_GROUP))
         attrs = kind & _ATTRIBUTE_MASK
         is_dir = bool(attrs & _FILE_ATTRIBUTE_DIRECTORY)
-        child = _Frame(children, is_drive, bool(kind & _KIND_MEMBER))
+        child = _Frame(children, has_info, bool(kind & _KIND_MEMBER))
 
         if frame.inner_owner is not None:
             # 中身を展開して登録した書庫の中。書庫のエントリに内部リストとしてぶら下げる
@@ -326,11 +334,15 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
             child.inner_owner, child.prefix = frame.inner_owner, path + "/"
         elif frame.drive is None:
             if is_drive:
-                child.drive = child.new_drive = CaseDrive("", "", "", 0, 0, 0, 0, "", frame.group)
+                child.drive = child.new_drive = CaseDrive(
+                    "", "", "", 0, 0, 0, 0, "", frame.group, " / ".join(frame.group_comments)
+                )
                 child.comment = comment
                 child.media_type = (kind >> _MEDIA_SHIFT) & _MEDIA_MASK
-            else:
-                child.group = (*frame.group, name) if name else frame.group  # ドライブをまとめるフォルダ
+            else:  # ドライブをまとめるグループ
+                group_comment = decode_text(comment)[1].strip()
+                child.group = (*frame.group, name) if name else frame.group
+                child.group_comments = (*frame.group_comments, group_comment) if group_comment else frame.group_comments
         elif name:
             if kind & _KIND_ARCHIVE:
                 # 書庫はフォルダとして記録されているが、サイズ・日時は書庫ファイルのもの。1 つのファイルとして扱う
@@ -347,7 +359,7 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
                 child.inner_owner = entry
         else:
             child.drive, child.prefix = frame.drive, frame.prefix
-        if children or is_drive:
+        if children or has_info:
             stack.append(child)
         elif child.is_member:
             reader.unpack(_MEMBER_TAIL)
@@ -363,7 +375,7 @@ def _read_drive_info(reader: _Reader, frame: _Frame, encoding: str) -> None:
     short_label = _text(reader.string(), encoding)  # 長いラベルは 16 文字で切られている
     cluster_sectors, sector_size = reader.unpack(_DRIVE_TAIL)
     drive = frame.new_drive
-    if drive is None:  # ドライブの中にドライブ (想定外)。情報だけ読み飛ばす
+    if drive is None:  # グループの情報 (中身はグループ名だけ)。読み飛ばす
         return
     drive.label = label or short_label
     drive.serial = f"{serial >> 16:04X}-{serial & 0xFFFF:04X}" if serial else ""

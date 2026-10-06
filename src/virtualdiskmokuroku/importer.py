@@ -150,7 +150,7 @@ def _build_drive(
         total_bytes=drive.total_bytes if has_volume else None,
         free_bytes=drive.free_bytes if has_volume else None,
     )
-    scanned_at = _registered_at(drive.comment) or file_time
+    scanned_at = _registered_at(drive.comment) or _registered_at(drive.group_comment) or file_time
     meta = {f"volume_{key}": value for key, value in volume.to_dict().items()}
     meta.update(
         scanned_at=scanned_at,
@@ -181,7 +181,13 @@ def _build_drive(
 
     result = ScanResult(IMPORT_ROOT, SOURCE_VCDCASE, stats, volume, scanned_at, meta)
     name = " / ".join((*drive.group, drive.label or "(名前なし)"))
-    extra = {"comment": drive.comment} if drive.comment else None
+    extra = {
+        key: value
+        for key, value in (
+            ("comment", drive.comment), ("group", " / ".join(drive.group)), ("group_comment", drive.group_comment),
+        )
+        if value
+    }  # fmt: skip
     return NewDrive(database, result, name, context_db, extra), context_count
 
 

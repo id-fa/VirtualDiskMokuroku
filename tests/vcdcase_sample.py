@@ -9,6 +9,7 @@ FILE = 0x20
 DIRECTORY = 0x10
 KIND_ARCHIVE = 0x40000000
 KIND_MEMBER = 0x80000000
+KIND_GROUP = 0x00200000
 LZH, ZIP = 1, 2
 FILETIME_2021 = 132726424220000000  # 2021-08-05 14:07:02 UTC
 FILETIME_2003 = 127000000000000000
@@ -61,6 +62,15 @@ def drive(label, children, *, serial=0x1A2B3C4D, filesystem="CDFS", total=700_00
     data += cstring(label.encode("cp932")) + b"\x00" + struct.pack("<I", serial) + cstring(filesystem.encode("ascii"))
     data += struct.pack("<QQ", total, free) + cstring((label[:16] if short_label is None else short_label).encode("cp932"))
     data += struct.pack("<II", cluster_sectors, sector)
+    return data
+
+
+def group(name, children, comment=b""):
+    """ドライブをまとめるグループ (フォルダ)。ドライブと同じ形式の情報が続くが、中身はグループ名だけ。"""
+    encoded = name.encode("cp932")
+    data = record(encoded, attrs=KIND_GROUP | DIRECTORY, mtime=0, comment=comment, children=children)
+    data += cstring(encoded) + b"\x00" + struct.pack("<I", 0) + b"\x00" + b"\xff" * 16
+    data += cstring(encoded) + struct.pack("<II", 0, 0)
     return data
 
 
