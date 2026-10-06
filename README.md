@@ -88,3 +88,7 @@ drives/<id>/backup/<日時>/...             旧世代
 ```
 python -m pytest -q
 ```
+
+## ライセンス
+
+[MIT License](LICENSE)
