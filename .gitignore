@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# Everything 本体と es.exe は配布物に含めない
+everything_portable/
+
+# カタログファイル
+*.vdmoku
+*.pmcat

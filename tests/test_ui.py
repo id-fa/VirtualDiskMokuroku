@@ -1,0 +1,274 @@
+"""GUI のスモークテスト (オフスクリーン)。"""
+
+import os
+import time
+
+import pytest
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+pytest.importorskip("PySide6")
+
+from PySide6.QtCore import QCoreApplication, QSettings, Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from virtualdiskmokuroku.core import scanner  # noqa: E402
+from virtualdiskmokuroku.core.catalog import Catalog  # noqa: E402
+from virtualdiskmokuroku.core.ignore import DEFAULT_IGNORE, IgnoreRules  # noqa: E402
+from virtualdiskmokuroku.core.search import SCOPE_ALL, SCOPE_FOLDER, SCOPE_SUBTREE  # noqa: E402
+from virtualdiskmokuroku.core.settings import AppSettings  # noqa: E402
+from virtualdiskmokuroku.ui.main_window import ROLE_DIR, MainWindow  # noqa: E402
+from virtualdiskmokuroku.ui.models import COL_LOCATION, COL_SIZE  # noqa: E402
+
+from test_core import make_tree  # noqa: E402
+
+
+@pytest.fixture(scope="module")
+def app():
+    QSettings.setDefaultFormat(QSettings.Format.IniFormat)
+    application = QApplication.instance() or QApplication([])
+    yield application
+
+
+@pytest.fixture
+def window(app, tmp_path, monkeypatch):
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("VIRTUALDISKMOKUROKU_CACHE", str(tmp_path / "cache"))
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path / "qsettings"))
+
+    catalog = Catalog.create(tmp_path / "ui.vdmoku")
+    for name in ("one", "two"):
+        tree = tmp_path / name
+        tree.mkdir()
+        make_tree(tree)
+        (tree / f"only_in_{name}.txt").write_bytes(b"abc")
+        db_path = tmp_path / f"{name}.db"
+        result = scanner.scan_to_db(str(tree), db_path, source=scanner.SOURCE_WALK, ignore=IgnoreRules(DEFAULT_IGNORE))
+        catalog.put_drive(db_path, result, name=f"ドライブ{name}")
+
+    main = MainWindow(AppSettings())
+    main.show()
+    assert main.open_catalog(catalog.path)
+    yield main
+    main.close()
+
+
+def wait_until(condition, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        QCoreApplication.processEvents()
+        if condition():
+            return True
+        time.sleep(0.01)
+    return False
+
+
+def names(window):
+    return [row.entry.name for row in window.table_model.rows]
+
+
+def wait_names(window, expected):
+    assert wait_until(lambda: names(window) == expected), names(window)
+
+
+def test_browse_filter_search_export(window, tmp_path):
+    root_names = ["docs", "docs.old", "empty", "music", "a.txt", "only_in_one.txt", "Zeta.bin"]
+    wait_names(window, root_names)
+    assert window.tree_model.rowCount() == 2
+    assert "空き" in window.tree_model.item(0).text()
+    assert window.table.isColumnHidden(COL_LOCATION)
+    # フォルダ行のサイズは配下の集計値
+    assert window.table_model.data(window.table_model.index(0, COL_SIZE)) == "110 B"
+    assert "フォルダ 4 / ファイル 3" in window.items_label.text()
+
+    # フォルダへ移動 → ツリーも追従
+    window._on_table_double_clicked(window.table_model.index(0, 0))
+    wait_names(window, ["sub", "readme.md"])
+    assert window.address.text().endswith("one\\docs")
+    current = window.tree_model.itemFromIndex(window.tree.currentIndex())
+    assert current.text() == "docs" and current.data(ROLE_DIR) == window._location[1]
+
+    # フォルダ内フィルタ / 下位フォルダを含むフィルタ
+    window.filter_edit.setText("deep")
+    wait_names(window, [])
+    window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_SUBTREE))
+    wait_names(window, ["deep.txt"])
+    assert not window.table.isColumnHidden(COL_LOCATION)
+    assert window.table_model.rows[0].location.endswith("one\\docs\\sub")
+
+    # 全ドライブ検索
+    window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_ALL))
+    window.filter_edit.setText("only_in")
+    wait_names(window, ["only_in_one.txt", "only_in_two.txt"])
+    assert {row.drive_name for row in window.table_model.rows} == {"ドライブone", "ドライブtwo"}
+
+    # コピー
+    window.table.selectAll()
+    window.copy_names()
+    assert QApplication.clipboard().text() == "only_in_one.txt\r\nonly_in_two.txt"
+    window.copy_paths()
+    assert QApplication.clipboard().text().splitlines()[1].endswith("two\\only_in_two.txt")
+
+    # エクスポート
+    from virtualdiskmokuroku.core import export
+
+    csv_path = tmp_path / "out.csv"
+    assert export.export_rows(csv_path, window.table_model.rows, export.FORMAT_CSV) == 2
+    text = csv_path.read_text(encoding="utf-8-sig")
+    assert text.splitlines()[0].startswith("名前,場所,サイズ") and "only_in_two.txt" in text
+    txt_path = tmp_path / "out.txt"
+    export.export_rows(txt_path, window.table_model.rows, export.FORMAT_TXT)
+    assert txt_path.read_text(encoding="utf-8-sig").splitlines()[0].endswith("one\\only_in_one.txt")
+
+    # 場所を開く → 親フォルダへ移動して該当ファイルを選択
+    window.table.setCurrentIndex(window.table_model.index(1, 0))
+    window.open_location()
+    assert wait_until(lambda: "only_in_two.txt" in names(window) and len(names(window)) == 7)
+    assert window.filter_edit.text() == ""
+    selected = window.table_model.row_at(window.table.currentIndex())
+    assert selected.entry.name == "only_in_two.txt"
+    assert window._location[0] == window.catalog.drives[1]["id"]
+
+    # 履歴で戻る / 上へ
+    window.go_back()
+    wait_names(window, ["sub", "readme.md"])
+    window.go_up()
+    assert wait_until(lambda: len(names(window)) == 7 and "only_in_one.txt" in names(window))
+    assert window.table_model.row_at(window.table.currentIndex()).entry.name == "docs"
+
+    # 並べ替え (サイズ降順でもフォルダが先頭)
+    window.table.sortByColumn(COL_SIZE, Qt.SortOrder.DescendingOrder)
+    assert names(window)[:4] == ["music", "docs", "docs.old", "empty"]
+    assert names(window)[4] == "a.txt"
+
+    # アドレスバーからの移動
+    window.address.setText(window.catalog.drives[0]["root"] + "\\docs\\sub")
+    window._on_address_entered()
+    wait_names(window, ["deep.txt", "写真 100%.JPG"])
+
+
+def test_context_scan_search_and_redecode(window, tmp_path):
+    pytest.importorskip("virtualdiskmokuroku.context")
+    from virtualdiskmokuroku.ui.scan_dialog import ScanWorker
+
+    tree = tmp_path / "ctx"
+    tree.mkdir()
+    make_tree(tree)
+    (tree / "memo.txt").write_bytes("これは秘密のメモです".encode("cp932"))
+    catalog = window.catalog
+    catalog.settings["context"] = {"text": {"enabled": True}}
+    catalog.save()
+
+    outcome = {}
+    worker = ScanWorker(catalog, str(tree), None, "コンテキスト", scanner.SOURCE_WALK, None)
+    worker.succeeded.connect(lambda drive, result, stats: outcome.update(drive=drive, stats=stats))
+    worker.failed.connect(lambda message: outcome.update(error=message))
+    worker.start()
+    assert wait_until(lambda: worker.isFinished() and outcome, timeout=20), outcome
+    assert "error" not in outcome, outcome
+    drive = outcome["drive"]
+    assert drive["has_context"] and outcome["stats"].processed >= 1
+
+    window._after_catalog_changed(drive["id"])
+    assert wait_until(lambda: "memo.txt" in names(window))
+    assert window.context_check.isEnabled()
+
+    # ファイル名には無い語を本文から検索
+    window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_SUBTREE))
+    window.filter_edit.setText("秘密")
+    wait_names(window, [])
+    window.context_check.setChecked(True)
+    wait_names(window, ["memo.txt"])
+
+    # プロパティに本文が出る
+    window.table.selectRow(0)
+    assert wait_until(lambda: window.properties._text_box.isVisible())
+    assert window.properties._text.toPlainText() == "これは秘密のメモです"
+
+    # 文字コードを指定して再取込 → カタログにも書き戻される
+    entry_id = window.table_model.rows[0].entry.id
+    window._redecode_text(drive["id"], entry_id, "latin-1")
+    assert wait_until(lambda: names(window) == [] or window.properties._text.toPlainText() != "これは秘密のメモです")
+    reopened = Catalog.open(catalog.path)
+    from virtualdiskmokuroku.context.context_db import ContextDB
+
+    with ContextDB(reopened.extract_context_db(drive["id"])) as context:
+        encoding, content = context.get_text(entry_id)
+    assert encoding.lower().replace("_", "-") in ("latin-1", "iso8859-1", "iso-8859-1") and "秘密" not in content
+
+    # 再スキャン (更新) では前回の抽出結果を引き継ぐ
+    outcome.clear()
+    worker = ScanWorker(catalog, str(tree), drive["id"], "", scanner.SOURCE_WALK, None)
+    worker.succeeded.connect(lambda drive, result, stats: outcome.update(drive=drive, stats=stats))
+    worker.failed.connect(lambda message: outcome.update(error=message))
+    window._close_databases()
+    worker.start()
+    assert wait_until(lambda: worker.isFinished() and outcome, timeout=20), outcome
+    assert "error" not in outcome, outcome
+    assert outcome["stats"].reused >= 1 and outcome["stats"].processed == 0
+    assert len(outcome["drive"]["backups"]) == 1
+    window._after_catalog_changed(drive["id"])
+
+
+def test_cancel_during_context_registers_partial_results(window, tmp_path):
+    pytest.importorskip("virtualdiskmokuroku.context")
+    from virtualdiskmokuroku.context.context_db import ContextDB
+    from virtualdiskmokuroku.ui.scan_dialog import ScanWorker
+
+    tree = tmp_path / "many"
+    tree.mkdir()
+    for number in range(200):
+        (tree / f"note_{number:03}.txt").write_text(f"memo {number}", encoding="utf-8")
+    catalog = window.catalog
+    catalog.settings["context"] = {"text": {"enabled": True}}
+
+    def run(drive_id, cancel_at):
+        outcome = {}
+        worker = ScanWorker(catalog, str(tree), drive_id, "many", scanner.SOURCE_WALK, None)
+
+        def on_progress(phase, count):
+            if cancel_at is not None and phase == "context" and count >= cancel_at:
+                worker.cancel()
+
+        # 進捗はワーカースレッドから直接受け取り、決まった位置でキャンセルする
+        worker.progress.connect(on_progress, Qt.ConnectionType.DirectConnection)
+        worker.succeeded.connect(lambda drive, result, stats: outcome.update(drive=drive, stats=stats))
+        worker.failed.connect(lambda message: outcome.update(error=message))
+        worker.start()
+        assert wait_until(lambda: worker.isFinished() and outcome, timeout=20), outcome
+        assert "error" not in outcome, outcome
+        return outcome["drive"], outcome["stats"]
+
+    drive, stats = run(None, cancel_at=60)
+    assert stats.cancelled and 60 <= stats.processed < 200
+    assert drive["has_context"] and drive["context_partial"] and drive["file_count"] == 200
+    with ContextDB(Catalog.open(catalog.path).extract_context_db(drive["id"])) as context:
+        assert context.summary() == {"text": stats.processed}
+
+    # 次の更新では取得済みの分を引き継ぎ、残りだけを読む
+    first = stats.processed
+    drive, stats = run(drive["id"], cancel_at=None)
+    assert not stats.cancelled and stats.reused == first and stats.processed == 200 - first
+    assert not drive["context_partial"]
+    window._after_catalog_changed(drive["id"])
+
+
+def test_limit_and_drive_management(window):
+    window.app_settings.result_limit = 3
+    window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_SUBTREE))
+    window.filter_edit.setText("t")
+    assert wait_until(lambda: len(names(window)) == 3 and window._truncated)
+    assert "上限" in window.items_label.text()
+
+    window.app_settings.result_limit = 1000
+    window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_FOLDER))
+    window.filter_edit.setText("")
+    assert wait_until(lambda: len(names(window)) == 7 and not window._truncated)
+
+    # ドライブ削除 → 残りのドライブが表示される
+    first = window.catalog.drives[0]["id"]
+    window._close_databases()
+    window.catalog.remove_drive(first)
+    window._after_catalog_changed()
+    assert window.tree_model.rowCount() == 1
+    assert wait_until(lambda: "only_in_two.txt" in names(window))
