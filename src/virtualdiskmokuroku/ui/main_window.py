@@ -336,9 +336,9 @@ class MainWindow(QMainWindow):
         self.act_back.setEnabled(self._history_index > 0)
         self.act_forward.setEnabled(self._history_index < len(self._history) - 1)
         self.act_up.setEnabled(has_drive and self._location[1] != ROOT_ID)  # type: ignore[index]
-        title = APP_NAME
+        title = f"{APP_NAME} {__version__}"
         if self.catalog is not None:
-            title = f"{self.catalog.path.name} - {APP_NAME}"
+            title = f"{self.catalog.path.name} - {title}"
         self.setWindowTitle(title)
 
     # ================================================================== カタログの開閉

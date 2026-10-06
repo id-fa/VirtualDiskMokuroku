@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "virtualdiskmokuroku"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Everything (es.exe) 連携のオフライン ファイルリスト カタログツール"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -14,7 +14,7 @@ dependencies = ["PySide6>=6.6"]
 [project.optional-dependencies]
 context = [
     "Pillow",
-    "mutagen",
+    "tinytag",
     "charset-normalizer",
     "olefile",
     "py7zr",
@@ -25,6 +25,9 @@ dev = ["pytest", "pytest-qt"]
 
 [project.scripts]
 virtualdiskmokuroku = "virtualdiskmokuroku.__main__:main"
+
+[tool.hatch.version]
+path = "src/virtualdiskmokuroku/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/virtualdiskmokuroku"]

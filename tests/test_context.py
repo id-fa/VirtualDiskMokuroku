@@ -433,23 +433,29 @@ def test_office_ole_extensions_follow_dependency():
 
 
 def test_audio_tags_mp3(tmp_path):
-    pytest.importorskip("mutagen")
-    from mutagen.easyid3 import EasyID3
+    pytest.importorskip("tinytag")
 
-    path = tmp_path / "song.mp3"
+    def text_frame(frame_id: bytes, text: str) -> bytes:
+        data = b"\x01" + text.encode("utf-16")  # 文字コード 1 = BOM 付き UTF-16
+        return frame_id + len(data).to_bytes(4, "big") + b"\0\0" + data
+
+    frames = b"".join(
+        text_frame(frame_id, text)
+        for frame_id, text in (
+            (b"TIT2", "テスト曲"), (b"TPE1", "テストアーティスト"), (b"TALB", "テストアルバム"),
+            (b"TYER", "2024"), (b"TCON", "Rock"), (b"TRCK", "3/12"),
+        )  # fmt: skip
+    )
+    size = len(frames)
+    synchsafe = bytes(((size >> 21) & 0x7F, (size >> 14) & 0x7F, (size >> 7) & 0x7F, size & 0x7F))
+    id3 = b"ID3\x03\x00\x00" + synchsafe + frames  # ID3v2.3
     frame = b"\xff\xfb\x90\x64" + b"\0" * 413  # MPEG1 Layer3 128kbps 44.1kHz の無音フレーム
-    path.write_bytes(frame * 40)
-    try:
-        tags = EasyID3()
-        tags["title"] = "テスト曲"
-        tags["artist"] = "テストアーティスト"
-        tags["album"] = "テストアルバム"
-        tags["date"] = "2024"
-        tags["genre"] = "Rock"
-        tags["tracknumber"] = "3/12"
-        tags.save(str(path))
-    except Exception as error:  # noqa: BLE001
-        pytest.skip(f"テスト用 MP3 を生成できません: {error}")
+    path = tmp_path / "song.mp3"
+    path.write_bytes(id3 + frame * 40)
+
+    extractor = AudioExtractor({"extensions": ["mp3", "ape", "m4a"]})
+    assert extractor.accepts("a.MP3", 1) and extractor.accepts("a.m4a", 1)
+    assert not extractor.accepts("a.ape", 1)  # TinyTag が読めない形式は設定にあっても対象外
 
     writer = EntryWriter(1, "audio")
     AudioExtractor().extract(str(path), writer)

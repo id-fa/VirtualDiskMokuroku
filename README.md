@@ -8,7 +8,7 @@ CD/DVD・ポータブル HDD/SSD など任意のドライブのファイルリ�
 - Windows 10 / 11、Python 3.12 以降
 - PySide6 (`pip install PySide6`)
 - Everything 本体と es.exe (同梱していません → [docs/Everything導入手順.md](docs/Everything導入手順.md))
-- 拡張コンテキストを使う場合のみ: `pip install Pillow mutagen charset-normalizer olefile py7zr rarfile pycdlib`
+- 拡張コンテキストを使う場合のみ: `pip install Pillow tinytag charset-normalizer olefile py7zr rarfile pycdlib`
   (無いライブラリに対応する項目だけが無効になります)
 
 ## 起動
@@ -92,3 +92,5 @@ python -m pytest -q
 ## ライセンス
 
 [MIT License](LICENSE)
+
+配布用の実行ファイルに同梱される Qt / PySide6 (LGPL) などのライセンスは [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) と `licenses/` にあります。

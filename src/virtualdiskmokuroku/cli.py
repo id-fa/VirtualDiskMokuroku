@@ -7,6 +7,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import __version__
 from .core import scanner
 from .core.catalog import CATALOG_EXTENSION, LEGACY_CATALOG_EXTENSIONS, Catalog
 from .core.drive_db import ROOT_ID, split_terms
@@ -109,6 +110,7 @@ def cmd_find(args: argparse.Namespace) -> int:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="virtualdiskmokuroku", description="オフライン ファイルリスト カタログ")
+    parser.add_argument("--version", action="version", version=f"VirtualDiskMokuroku {__version__}")
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("volumes", help="接続中のボリューム一覧").set_defaults(func=cmd_volumes)
