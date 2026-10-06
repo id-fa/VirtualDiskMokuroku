@@ -87,7 +87,22 @@ KEY_LABELS: dict[str, str] = {
     "inner_truncated": "一覧の打ち切り",
     "iso_filesystem": "ISO のファイルシステム",
     "volume_label": "ボリュームラベル",
+    # Virtual CD-ROM Case からのインポート
+    "property_type": "プロパティの種類",
+    "property": "プロパティ",
+    "crc32": "CRC32",
+    "creator": "作成元アプリケーション",
+    "file_version": "ファイルバージョン",
+    "product_version": "製品バージョン",
+    "product_name": "製品名",
+    "description": "説明",
+    "copyright": "著作権",
+    "target_os": "対象 OS",
+    "module_type": "モジュールの種類",
 }
+
+# 抽出器以外が作る種別 (kind) -> 表示名
+KIND_LABELS: dict[str, str] = {"vcdcase": "Virtual CD-ROM Case からのインポート"}
 
 
 def default_context_settings() -> dict:
@@ -95,4 +110,4 @@ def default_context_settings() -> dict:
     return {kind: {"enabled": False, **copy.deepcopy(cls.default_params)} for kind, cls in EXTRACTORS.items()}
 
 
-__all__ = ["EXTRACTORS", "KEY_LABELS", "EntryWriter", "Extractor", "default_context_settings"]
+__all__ = ["EXTRACTORS", "KEY_LABELS", "KIND_LABELS", "EntryWriter", "Extractor", "default_context_settings"]

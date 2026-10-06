@@ -53,6 +53,7 @@ from ..core.errors import CatalogError, PasswordError
 from ..core.formatting import format_bytes, format_iso, format_size
 from ..core.search import SCOPE_ALL, SCOPE_FOLDER, SCOPE_SUBTREE, DbPool, DriveRef, QuerySpec, Row, iter_rows
 from ..core.settings import AppSettings
+from .import_dialog import ImportDialog
 from .models import COL_DRIVE, COL_LOCATION, COL_MTIME, COL_NAME, COL_SIZE, COL_TYPE, FileTableModel
 from .properties_panel import PropertiesPanel
 from .query_worker import QueryWorker
@@ -72,6 +73,8 @@ from .thumbnail_view import (
 APP_NAME = "VirtualDiskMokuroku"
 _CATALOG_FILTER = f"カタログ (*{CATALOG_EXTENSION})"
 _OPEN_FILTER = "カタログ (" + " ".join(f"*{ext}" for ext in (CATALOG_EXTENSION, *LEGACY_CATALOG_EXTENSIONS)) + ")"
+_IMPORT_FILTER = "Virtual CD-ROM Case のカタログ (*.cas);;すべてのファイル (*)"
+_SOURCE_NAMES = {"everything": "Everything", "walk": "直接走査", "vcdcase": "Virtual CD-ROM Case からインポート"}
 _FILTER_DELAY_MS = 180
 
 ROLE_DRIVE = Qt.ItemDataRole.UserRole + 1
@@ -292,6 +295,7 @@ class MainWindow(QMainWindow):
         self.act_open = action("カタログを開く(&O)…", self.open_catalog_dialog, QKeySequence.StandardKey.Open)
         self.act_close = action("カタログを閉じる(&C)", self.close_catalog)
         self.act_exit = action("終了(&X)", self.close)
+        self.act_import_vcdcase = action("Virtual CD-ROM Case のカタログをインポート(&I)…", self.import_vcdcase)
         self.act_export = action("表示中の一覧をエクスポート(&E)…", self.export_rows, "Ctrl+E")
         self.act_export_decrypted = action("復号して別のカタログに書き出す(&D)…", self.export_decrypted)
         self.act_copy_names = action("名前をコピー(&C)", self.copy_names, QKeySequence.StandardKey.Copy)
@@ -326,6 +330,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
         file_menu.addAction(self.act_close)
         file_menu.addSeparator()
+        file_menu.addAction(self.act_import_vcdcase)
         file_menu.addAction(self.act_export)
         file_menu.addAction(self.act_export_decrypted)
         file_menu.addSeparator()
@@ -410,7 +415,7 @@ class MainWindow(QMainWindow):
     def _update_ui_state(self) -> None:
         has_catalog = self.catalog is not None
         has_drive = self._location is not None
-        for item in (self.act_close, self.act_scan, self.act_catalog_settings):
+        for item in (self.act_close, self.act_scan, self.act_catalog_settings, self.act_import_vcdcase):
             item.setEnabled(has_catalog)
         for item in (self.act_rescan, self.act_rename, self.act_drive_info, self.act_remove, self.act_export):
             item.setEnabled(has_drive)
@@ -1194,6 +1199,20 @@ class MainWindow(QMainWindow):
         if dialog.updated_drive_id:
             self._after_catalog_changed(dialog.updated_drive_id)
 
+    def import_vcdcase(self, path: str | None = None) -> None:
+        """Virtual CD-ROM Case のカタログ (.cas) の全ドライブを、開いているカタログへ追加する。"""
+        if self.catalog is None:
+            return
+        if not path:
+            path, _filter = QFileDialog.getOpenFileName(self, "Virtual CD-ROM Case のカタログをインポート", "", _IMPORT_FILTER)
+            if not path:
+                return
+        known = {drive["id"] for drive in self.catalog.drives}
+        ImportDialog(self.catalog, path, self).exec()
+        added = [drive["id"] for drive in self.catalog.drives if drive["id"] not in known]
+        if added:
+            self._after_catalog_changed(added[0])
+
     def rescan_current_drive(self) -> None:
         drive = self._current_drive()
         if drive is not None:
@@ -1295,7 +1314,9 @@ class MainWindow(QMainWindow):
         backups = drive.get("backups", [])
         lines = [self._drive_tooltip(drive)]
         lines.append(f"容量: {format_size(drive.get('total_bytes'))}    空き: {format_size(drive.get('free_bytes'))} (スキャン時点)")
-        lines.append(f"取得元: {'Everything' if drive.get('source') == 'everything' else '直接走査'}")
+        lines.append(f"取得元: {_SOURCE_NAMES.get(drive.get('source', ''), '直接走査')}")
+        if drive.get("comment"):
+            lines.append(f"コメント: {drive['comment']}")
         context = "なし"
         if drive.get("has_context"):
             context = "あり (取得を途中でキャンセル。次回の更新で続きを取得)" if drive.get("context_partial") else "あり"

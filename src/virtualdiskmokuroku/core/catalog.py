@@ -190,6 +190,17 @@ class _Source:
     path: Path | None = None  # 大きすぎてセッション用一時フォルダに復号した場合のファイル
 
 
+@dataclass(slots=True)
+class NewDrive:
+    """``Catalog.add_drives`` に渡す、新規登録するドライブ 1 台分。DB はファイルのパスかバイト列。"""
+
+    database: Path | bytes
+    result: ScanResult
+    name: str | None = None
+    context_db: Path | bytes | None = None
+    extra: dict | None = None  # ドライブ情報に追加で記録する項目 (コメントなど)
+
+
 class Catalog:
     def __init__(
         self,
@@ -615,6 +626,44 @@ class Catalog:
         DB はファイルのパスでも、メモリ上で作ったバイト列でもよい。
         ``context_partial`` は拡張コンテキストの取得が途中で打ち切られたことの記録。
         """
+        drive, add, rename, delete_prefixes = self._plan_drive(
+            db_path, result, drive_id, name, context_db_path, context_partial
+        )
+        self._rewrite(add=add, rename=rename, delete_prefixes=delete_prefixes)
+        return drive
+
+    def add_drives(self, items: Iterable[NewDrive]) -> list[dict]:
+        """複数のドライブをまとめて新規登録する(カタログの書き換えは 1 回で済ませる)。"""
+        count = len(self.drives)
+        drives: list[dict] = []
+        add: dict[str, Path | bytes] = {}
+        delete_prefixes: list[str] = []
+        try:
+            for item in items:
+                drive, members, _rename, obsolete = self._plan_drive(
+                    item.database, item.result, None, item.name, item.context_db, False
+                )
+                drive.update(item.extra or {})
+                drives.append(drive)
+                add.update(members)
+                delete_prefixes += obsolete
+            if drives:
+                self._rewrite(add=add, delete_prefixes=delete_prefixes)
+        except BaseException:
+            del self.drives[count:]
+            raise
+        return drives
+
+    def _plan_drive(
+        self,
+        db_path: str | os.PathLike[str] | bytes,
+        result: ScanResult,
+        drive_id: str | None,
+        name: str | None,
+        context_db_path: str | os.PathLike[str] | bytes | None,
+        context_partial: bool,
+    ) -> tuple[dict, dict[str, Path | bytes], dict[str, str], list[str]]:
+        """ドライブの登録内容を manifest に反映し、カタログの書き換え計画 (追加・改名・削除) を返す。"""
         snapshot = {key: getattr(result.volume, key) for key in _SNAPSHOT_KEYS if hasattr(result.volume, key)}
         snapshot.update(
             root=result.root,
@@ -646,8 +695,7 @@ class Catalog:
         elif context_member not in rename:
             # 新しい世代に拡張コンテキストが無いなら、旧世代のものを現行として残さない
             delete_prefixes.append(context_member)
-        self._rewrite(add=add, rename=rename, delete_prefixes=delete_prefixes)
-        return drive
+        return drive, add, rename, delete_prefixes
 
     def _rotate_backups(self, drive: dict) -> tuple[dict[str, str], list[str]]:
         """現行世代をバックアップへ回す計画を立て、manifest 上の世代リストを更新する。"""

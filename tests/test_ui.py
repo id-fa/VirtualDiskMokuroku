@@ -576,3 +576,60 @@ def test_thumbnail_view_modes(window, tmp_path):
     assert window._view() is view
     window.act_thumb_zoom.setChecked(False)
     window.set_view_mode(VIEW_DETAILS)
+
+
+def test_import_vcdcase(window, tmp_path, monkeypatch):
+    import vcdcase_sample
+
+    from virtualdiskmokuroku.ui.import_dialog import ImportDialog
+
+    cas_path = tmp_path / "sample.cas"
+    cas_path.write_bytes(vcdcase_sample.sample_case())
+    dialogs = []
+
+    def run_dialog(dialog):
+        dialogs.append(dialog)
+        assert wait_until(lambda: dialog._worker is None, timeout=20)
+        dialog.reject()
+
+    monkeypatch.setattr(ImportDialog, "exec", run_dialog)
+    assert window.act_import_vcdcase.isEnabled()
+    window.import_vcdcase(str(cas_path))
+    assert dialogs[0].outcome is not None and "2 台のドライブを追加しました" in dialogs[0]._status.text()
+
+    # 追加されたドライブへ移動している
+    assert window.tree_model.rowCount() == 4
+    wait_names(window, ["写真", "data.lzh", "memo.txt", "readme.txt", "setup.exe"])
+    assert window.address.text() == "?:\\"
+    assert window._current_drive()["name"] == "BACKUP_2003"
+
+    # コメントはテキスト内容として、プロパティはメタ情報として出る (フォルダのコメントも)
+    window.table.selectRow(names(window).index("readme.txt"))
+    assert wait_until(lambda: window.properties._text.toPlainText().startswith("はじめにお読みください。"))
+    window.table.selectRow(names(window).index("setup.exe"))
+    assert wait_until(lambda: window.properties._meta.isVisible())
+    meta = window.properties._meta
+    shown = {meta.item(row, 0).text(): meta.item(row, 1).text() for row in range(meta.rowCount())}
+    assert shown["会社"] == "サンプル社" and shown["ファイルバージョン"] == "1.2.3.4"
+    assert meta.item(0, 0).toolTip() == "Virtual CD-ROM Case からのインポート"
+    window.table.selectRow(names(window).index("data.lzh"))
+    assert wait_until(lambda: window.properties._inner.isVisible() and window.properties._inner.rowCount() == 3)
+    window.table.selectRow(names(window).index("写真"))
+    assert wait_until(lambda: window.properties._text.toPlainText() == "2003 年の旅行")
+
+    # コメントも検索できる
+    window.scope_combo.setCurrentIndex(window.scope_combo.findData(SCOPE_ALL))
+    window.context_check.setChecked(True)
+    window.filter_edit.setText("お読みください")
+    wait_names(window, ["readme.txt"])
+
+    # 読めないファイルはエラーを表示し、カタログは変えない
+    broken = tmp_path / "broken.cas"
+    broken.write_bytes(cas_path.read_bytes()[:-7])
+    shown_errors = []
+    from PySide6.QtWidgets import QMessageBox
+
+    monkeypatch.setattr(QMessageBox, "critical", lambda _parent, _title, text: shown_errors.append(text))
+    window.import_vcdcase(str(broken))
+    assert dialogs[1].outcome is None and "構造が合いません" in shown_errors[0]
+    assert window.tree_model.rowCount() == 4

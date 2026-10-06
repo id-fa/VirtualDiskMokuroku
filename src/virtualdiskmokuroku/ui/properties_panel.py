@@ -32,10 +32,11 @@ _ENCODINGS = [
 _MAX_INNER_ROWS = 5000
 
 try:
-    from ..context import EXTRACTORS, KEY_LABELS
+    from ..context import EXTRACTORS, KEY_LABELS, KIND_LABELS
 except ImportError:  # 拡張コンテキスト機能が無くても基本情報は表示できる
     EXTRACTORS = {}
     KEY_LABELS = {}
+    KIND_LABELS = {}
 
 
 def _selectable(text: str = "") -> QLabel:
@@ -154,7 +155,7 @@ class PropertiesPanel(QScrollArea):
         self._fields["attrs"].setText(format_attributes(entry.attrs))
         self._fields["drive"].setText(row.drive_name)
 
-        if context_db is None or entry.is_dir:
+        if context_db is None:
             return
         self._show_context(entry.id, context_db)
 
@@ -174,7 +175,7 @@ class PropertiesPanel(QScrollArea):
                 caption = KEY_LABELS.get(key, key)
                 item = QTableWidgetItem(caption)
                 extractor = EXTRACTORS.get(kind)
-                item.setToolTip(extractor.label if extractor else kind)
+                item.setToolTip(extractor.label if extractor else KIND_LABELS.get(kind, kind))
                 self._meta.setItem(index, 0, item)
                 self._meta.setItem(index, 1, QTableWidgetItem(value))
             self._meta.resizeColumnToContents(0)

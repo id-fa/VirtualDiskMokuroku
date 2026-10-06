@@ -15,6 +15,7 @@ from .core.errors import CatalogError
 from .core.es_client import EsClient, EsError, find_es_exe
 from .core.formatting import format_iso, format_size
 from .core.volume import get_volume_info, list_volumes
+from .importer import import_vcdcase
 from .pipeline import scan_into_catalog
 
 
@@ -90,6 +91,18 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import(args: argparse.Namespace) -> int:
+    catalog = _open_catalog(args.catalog, args.password, create=True, encrypt=args.encrypt)
+    outcome = import_vcdcase(catalog, args.source)
+    for drive in outcome.drives:
+        print(
+            f"追加: {drive['name']}  ファイル {drive['file_count']:,} / フォルダ {drive['dir_count']:,} / "
+            f"合計 {format_size(drive['total_size'])}"
+        )
+    print(f"{len(outcome.drives):,} ドライブを取り込みました (コメントなどの情報 {outcome.context_count:,} 件)")
+    return 0
+
+
 def cmd_list(args: argparse.Namespace) -> int:
     catalog = _open_catalog(args.catalog, args.password)
     if catalog.encrypted:
@@ -136,6 +149,13 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--encrypt", action="store_true", help="カタログを新規作成する場合に暗号化する (--password が必要)")
     scan.add_argument("--password")
     scan.set_defaults(func=cmd_scan)
+
+    import_ = sub.add_parser("import", help="Virtual CD-ROM Case のカタログ (.cas) を取り込む")
+    import_.add_argument("source", help="取り込む .cas ファイル")
+    import_.add_argument("catalog", help="カタログファイル (.vdmoku)。無ければ作成")
+    import_.add_argument("--encrypt", action="store_true", help="カタログを新規作成する場合に暗号化する (--password が必要)")
+    import_.add_argument("--password")
+    import_.set_defaults(func=cmd_import)
 
     list_ = sub.add_parser("list", help="カタログ内のドライブ一覧")
     list_.add_argument("catalog")
