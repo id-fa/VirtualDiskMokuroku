@@ -11,7 +11,7 @@ Everything (es.exe) by voidtools.
 - Windows 10 / 11, Python 3.12 or later
 - PySide6 (`pip install PySide6`)
 - Only for encrypted catalogs: `pip install cryptography`
-- Everything and es.exe (not bundled → [docs/Everything導入手順.md](docs/Everything導入手順.md), in Japanese)
+- Everything and es.exe (not bundled → [docs/Everything-setup.en.md](docs/Everything-setup.en.md))
 - Only for extended context: `pip install Pillow tinytag charset-normalizer olefile py7zr rarfile pycdlib`
   (features whose library is missing are simply disabled)
 
@@ -185,7 +185,7 @@ While browsing, only the databases that are needed are extracted to `%LOCALAPPDA
 - Case-insensitive filtering applies to ASCII letters only (full-width letters and accented characters are
   matched exactly).
 - Scanning is slow when Everything does not index creation times and attributes → chapter 5 of
-  [docs/Everything導入手順.md](docs/Everything導入手順.md) (in Japanese).
+  [docs/Everything-setup.en.md](docs/Everything-setup.en.md).
 - Comparing backup generations is not implemented yet (planned).
 
 ## Development

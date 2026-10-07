@@ -35,7 +35,7 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller が失敗しました" }
 
 $docs = Join-Path $root "dist\VirtualDiskMokuroku\docs"
 New-Item -ItemType Directory -Force $docs | Out-Null
-Copy-Item (Join-Path $root "docs\Everything導入手順.md") $docs
+Copy-Item (Join-Path $root "docs\Everything導入手順.md"), (Join-Path $root "docs\Everything-setup.en.md") $docs
 # README と、同梱ライブラリのライセンス一式 (LGPL などは本文の添付が必要)
 $dist = Join-Path $root "dist\VirtualDiskMokuroku"
 Copy-Item (Join-Path $root "README.md"), (Join-Path $root "README.en.md"), (Join-Path $root "LICENSE"), (Join-Path $root "THIRD-PARTY-NOTICES.md") $dist

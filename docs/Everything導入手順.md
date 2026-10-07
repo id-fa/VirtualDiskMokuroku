@@ -1,5 +1,7 @@
 # Everything の導入手順
 
+日本語 | [English](Everything-setup.en.md)
+
 VirtualDiskMokuroku はファイルリストの取得に voidtools の **Everything** と、そのコマンドライン版 **ES (es.exe)** を利用します。
 どちらも本アプリには同梱していないため、以下の手順で用意してください。
 
