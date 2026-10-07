@@ -5,6 +5,10 @@
 CD/DVD・ポータブル HDD/SSD など任意のドライブのファイルリストをカタログ化し、ドライブを外した状態(オフライン)で
 エクスプローラ風に閲覧・検索できる Windows 用ツールです。ファイルリストの取得には voidtools の Everything (es.exe) を利用します。
 
+|スクリーンショット|拡張コンテキスト設定|
+|---|---|
+|![メイン画面](docs/screenshot1.webp)|![拡張コンテキスト設定画面](docs/screenshot2.webp)|
+
 ## 必要なもの
 
 - Windows 10 / 11、Python 3.12 以降
