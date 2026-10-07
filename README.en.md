@@ -126,9 +126,10 @@ What is imported:
 
 - Folder structure, sizes, modified and creation times, attributes; volume label, serial number, file system,
   capacity and free space
-- Comments on files and folders become "text content"; properties (HTML titles, version information of
-  executables, PDF document information, AVI tags, etc.) and CRC32 become metadata, all searchable with "Search
-  extended context too". Garbled comments can be re-read with an encoding chosen in the Properties panel
+- Comments on files and folders become "text content"; categories, properties (HTML titles, version information
+  of executables, PDF document information, AVI tags, etc.) and CRC32 become metadata, all searchable with "Search
+  extended context too". Garbled comments can be re-read with an encoding chosen in the Properties panel. The
+  category of a drive is shown in "Drive info"
 - Archives that were registered with their contents expanded (ZIP, LZH, RAR, etc.) are imported as a single file,
   as this application does when scanning, and their contents go into "Files inside the archive / image" (name,
   size, modified time; searchable with "Search extended context too"). The CRC of each file inside the archive is
@@ -140,7 +141,7 @@ What is imported:
   updates it as the same drive, matched by label and serial number (the imported comments are not kept after an
   update)
 - The `.cas` format is not documented, so it is read based on the analysis of real files (format version 12).
-  Some items, such as categories, are not imported. If a file cannot be read, an error is shown and the catalog is
+  Items whose meaning is unknown are not imported. If a file cannot be read, an error is shown and the catalog is
   left unchanged
 
 ## Display language

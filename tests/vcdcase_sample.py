@@ -24,12 +24,12 @@ def cstring(data: bytes) -> bytes:
     return b"\xff\xff\xff" + struct.pack("<I", len(data)) + data
 
 
-def record(name, *, attrs=FILE, size=0, mtime=FILETIME_2021, ctime=0, comment=b"", properties=(), children=(),
-           crc=None, archive_type=0, packed=None, lead=None, extra=b""):  # fmt: skip
+def record(name, *, attrs=FILE, size=0, mtime=FILETIME_2021, ctime=0, comment=b"", category=b"", properties=(),
+           children=(), crc=None, archive_type=0, packed=None, lead=None, extra=b""):  # fmt: skip
     if isinstance(name, str):
         name = name.encode("cp932")
     data = struct.pack("<IQIH3Q", attrs if lead is None else lead, size, attrs, archive_type, 0, mtime, ctime)
-    data += cstring(name) + b"\x02" + cstring(comment) + b"\x00"
+    data += cstring(name) + b"\x02" + cstring(comment) + cstring(category)
     data += bytes([len(properties)]) + b"".join(cstring(item) for item in properties)
     if properties:
         data += cstring(extra)  # プロパティの数には含まれない、最後の文字列
@@ -57,8 +57,10 @@ def member_folder(name, children=()):
 
 
 def drive(label, children, *, serial=0x1A2B3C4D, filesystem="CDFS", total=700_000_000, free=0, media=1,
-          cluster_sectors=1, sector=2048, comment=b"2003/04/05", short_label=None):  # fmt: skip
-    data = record(b"", attrs=0x10000000 | (media << 24) | DIRECTORY, mtime=0, comment=comment, children=children)
+          cluster_sectors=1, sector=2048, comment=b"2003/04/05", category=b"", short_label=None):  # fmt: skip
+    data = record(
+        b"", attrs=0x10000000 | (media << 24) | DIRECTORY, mtime=0, comment=comment, category=category, children=children
+    )
     data += cstring(label.encode("cp932")) + b"\x00" + struct.pack("<I", serial) + cstring(filesystem.encode("ascii"))
     data += struct.pack("<QQ", total, free) + cstring((label[:16] if short_label is None else short_label).encode("cp932"))
     data += struct.pack("<II", cluster_sectors, sector)
@@ -111,8 +113,11 @@ def sample_case() -> bytes:
             folder(
                 "写真",
                 [
-                    record("index.html", size=900, comment="写真の一覧".encode("utf-8"), properties=HTML_PROPERTIES),
-                    record("海.jpg", size=50_000, mtime=FILETIME_2003, ctime=FILETIME_BROKEN),
+                    record(
+                        "index.html", size=900, comment="写真の一覧".encode("utf-8"), properties=HTML_PROPERTIES,
+                        category="旅行".encode("cp932"),
+                    ),  # fmt: skip
+                    record("海.jpg", size=50_000, mtime=FILETIME_2003, ctime=FILETIME_BROKEN, category=b"photo"),
                     folder("空のフォルダ"),
                 ],
                 comment="2003 年の旅行".encode("cp932"),
@@ -128,6 +133,7 @@ def sample_case() -> bytes:
             record("memo.txt", size=10, comment=LONG_COMMENT),
             record("tv.avi", size=7000, properties=AUDIO_PROPERTIES, extra=b"CATV / MPEG1"),
         ],
+        category="バックアップ".encode("cp932"),
     )
     floppy = drive(
         "フロッピー 12",

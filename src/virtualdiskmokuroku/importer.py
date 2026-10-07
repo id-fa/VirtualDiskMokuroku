@@ -1,8 +1,8 @@
 """他のカタログソフトのデータの取り込み(GUI と CLI で共用)。
 
 Virtual CD-ROM Case の .cas を読み、ドライブごとに files.db (と、コメントなどがあれば context.db) を作って
-カタログへ新規登録する。コメントはテキスト内容として、プロパティ(HTML のタイトルや実行ファイルのバージョン情報)と
-CRC32 はメタ情報として取り込む。中身を展開して登録されていた書庫は、このアプリの書庫の扱いに合わせて、
+カタログへ新規登録する。コメントはテキスト内容として、プロパティ(HTML のタイトルや実行ファイルのバージョン情報)・
+分類・CRC32 はメタ情報として取り込む。中身を展開して登録されていた書庫は、このアプリの書庫の扱いに合わせて、
 書庫内リストを持つ 1 つのファイルとして取り込む(書庫内のエントリが持つ CRC などは取り込まない)。
 """
 
@@ -186,7 +186,9 @@ def _build_drive(
     result = ScanResult(IMPORT_ROOT, SOURCE_VCDCASE, stats, volume, scanned_at, meta)
     extra = {
         key: value
-        for key, value in (("comment", drive.comment), ("group", group), ("group_comment", group_comment))
+        for key, value in (
+            ("comment", drive.comment), ("category", drive.category), ("group", group), ("group_comment", group_comment),
+        )
         if value
     }
     return NewDrive(database, result, drive.label or tr('(名前なし)'), context_db, extra), context_count
@@ -264,6 +266,8 @@ def _fill_writer(writer, entry: vcdcase.CaseEntry) -> None:
         encoding, text = vcdcase.decode_text(entry.comment)
         if text.strip():
             writer.set_text(encoding, text, entry.comment)
+    if entry.category:
+        writer.add_meta("category", entry.category)
     for key, value in vcdcase.property_items(entry.properties):
         writer.add_meta(key, value)
     if entry.crc is not None:

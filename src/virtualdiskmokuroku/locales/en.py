@@ -371,6 +371,7 @@ STRINGS: dict[str, str] = {
     "(バックアップはありません)": "(no backups)",
     "グループ: {group}{group_comment}": "Group: {group}{group_comment}",
     "コメント: {comment}": "Comment: {comment}",
+    "分類: {category}": "Category: {category}",
     "カタログを作成できません。\n\n{error}": "Cannot create the catalog.\n\n{error}",
     "カタログを開けません。\n\n{error}": "Cannot open the catalog.\n\n{error}",
     "読み込みに失敗しました: {error}": "Loading failed: {error}",

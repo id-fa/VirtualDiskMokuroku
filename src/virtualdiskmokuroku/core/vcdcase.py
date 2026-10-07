@@ -10,7 +10,7 @@ CSV エクスポートと突き合わせて分かった構造で、意味の分�
 
     ヘッダ    FF FF, スキーマ (u16), クラス名の長さ (u16), "CCDCase", 不明 12 バイト
     レコード  属性 (u32), サイズ (u64), 属性 (u32。同じ値), 書庫の種類 (u16), アクセス・更新・作成日時 (u64 × 3), 名前,
-              文字列の数 (u8。常に 2) とその文字列 (コメント, 不明),
+              文字列の数 (u8。常に 2) とその文字列 (コメント, 分類),
               プロパティの数 (u8) とその文字列 (先頭は "HTML" "MODULE" などの種類。1 つ以上あれば、数に含まれない
               文字列がもう 1 つ続く),
               不明 7 バイト, CRC の有無 (u16), CRC32 (u32), 子の数 (u32), 子レコード…,
@@ -109,10 +109,11 @@ class CaseEntry:
     crc: int | None = None  # CRC32 (登録時に計算していた場合)
     # 中身を展開して登録した書庫の内部エントリ: (パス, サイズ, 更新日時, フォルダか)。パスの区切りは "/"
     inner: list[tuple[str, int | None, int | None, bool]] = field(default_factory=list)
+    category: str = ""  # Virtual CD-ROM Case で付けた分類
 
     @property
     def has_context(self) -> bool:
-        return bool(self.comment or self.properties or self.inner) or self.crc is not None
+        return bool(self.comment or self.properties or self.inner or self.category) or self.crc is not None
 
 
 @dataclass(slots=True)
@@ -125,6 +126,7 @@ class CaseDrive:
     media_type: int  # 1 = CD/DVD、8 = ディスク (ほかの値は未確認)
     cluster_size: int
     comment: str  # 既定では登録した日付 ("2026/10/06") が入っている
+    category: str = ""  # Virtual CD-ROM Case で付けた分類
     group: tuple[str, ...] = ()  # ドライブがグループ (フォルダ) に入っていた場合の、上位のグループ名 (外側から順)
     group_comments: tuple[str, ...] = ()  # 各グループのコメント (group と同じ並び)
     entries: list[CaseEntry] = field(default_factory=list)
@@ -148,6 +150,7 @@ class _Frame:
     new_drive: CaseDrive | None = None  # このレコードで始まったドライブ (ドライブ情報の書き込み先)
     drive: CaseDrive | None = None  # 子が属するドライブ
     comment: bytes = b""
+    category: bytes = b""
     group: tuple[str, ...] = ()
     group_comments: tuple[str, ...] = ()
     prefix: str = ""  # 子のパスの前に付ける文字列
@@ -298,14 +301,15 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
         if children * _MIN_RECORD_SIZE > data_size - reader.pos:
             raise IndexError(tr('子の数が不正です'))
         comment = _raw(strings[0]) if strings else b""
+        category = _raw(strings[1]) if len(strings) > 1 else b""
         return (
-            size, kind, archive_type, _filetime(mtime), _filetime(ctime), name, comment, properties,
+            size, kind, archive_type, _filetime(mtime), _filetime(ctime), name, comment, category, properties,
             crc if has_crc else None, children,
         )  # fmt: skip
 
     top = read_record()
     case = CaseFile(schema, _text(top[5], encoding))
-    stack = [_Frame(top[9])]
+    stack = [_Frame(top[10])]
     while stack:
         frame = stack[-1]
         if frame.remaining == 0:
@@ -318,7 +322,7 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
                     case.drives.append(frame.new_drive)
             continue
         frame.remaining -= 1
-        size, kind, archive_type, mtime, ctime, raw_name, comment, properties, crc, children = read_record()
+        size, kind, archive_type, mtime, ctime, raw_name, comment, category, properties, crc, children = read_record()
         name = _text(raw_name, encoding)
         is_drive = bool(kind & _KIND_DRIVE)
         has_info = bool(kind & (_KIND_DRIVE | _KIND_GROUP))
@@ -335,8 +339,10 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
             child.inner_owner, child.prefix = frame.inner_owner, path + "/"
         elif frame.drive is None:
             if is_drive:
-                child.drive = child.new_drive = CaseDrive("", "", "", 0, 0, 0, 0, "", frame.group, frame.group_comments)
-                child.comment = comment
+                child.drive = child.new_drive = CaseDrive(
+                    "", "", "", 0, 0, 0, 0, "", group=frame.group, group_comments=frame.group_comments
+                )
+                child.comment, child.category = comment, category
                 child.media_type = (kind >> _MEDIA_SHIFT) & _MEDIA_MASK
             else:  # ドライブをまとめるグループ
                 child.group, child.group_comments = frame.group, frame.group_comments
@@ -349,8 +355,9 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
                 is_dir = False
                 attrs &= ~_FILE_ATTRIBUTE_DIRECTORY
             entry = CaseEntry(
-                frame.prefix + name, is_dir, None if is_dir else size, mtime, ctime, attrs, comment, properties, crc
-            )
+                frame.prefix + name, is_dir, None if is_dir else size, mtime, ctime, attrs, comment, properties, crc,
+                category=decode_text(category)[1].strip(),
+            )  # fmt: skip
             frame.drive.entries.append(entry)
             child.drive = frame.drive
             if is_dir:
@@ -383,3 +390,4 @@ def _read_drive_info(reader: _Reader, frame: _Frame, encoding: str) -> None:
     drive.total_bytes, drive.free_bytes = total_bytes, free_bytes
     drive.media_type, drive.cluster_size = frame.media_type, cluster_sectors * sector_size
     drive.comment = decode_text(frame.comment)[1].strip()
+    drive.category = decode_text(frame.category)[1].strip()

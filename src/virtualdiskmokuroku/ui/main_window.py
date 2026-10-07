@@ -1413,6 +1413,8 @@ class MainWindow(QMainWindow):
             lines.append(tr('グループ: {group}{group_comment}').format(group=drive['group'], group_comment=group_comment))
         if drive.get("comment"):
             lines.append(tr('コメント: {comment}').format(comment=drive['comment']))
+        if drive.get("category"):
+            lines.append(tr('分類: {category}').format(category=drive['category']))
         context = tr('なし')
         if drive.get("has_context"):
             context = tr('あり (取得を途中でキャンセル。次回の更新で続きを取得)') if drive.get("context_partial") else tr('あり')
