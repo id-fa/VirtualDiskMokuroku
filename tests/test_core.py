@@ -78,6 +78,10 @@ def test_build_aggregates_and_preorder(scanned):
     assert result.stats.file_count == len(kept)
     assert result.stats.total_size == sum(kept.values())
     assert result.stats.dir_count == 5  # docs, docs\sub, docs.old, music, empty
+    # 最も新しいファイルの更新日時 (フォルダは含めない) を統計と DB の meta に持つ
+    with DriveDB(db_path) as db:
+        expected_latest = db._conn.execute("SELECT MAX(mtime) FROM entries WHERE is_dir = 0").fetchone()[0]
+        assert result.stats.latest_mtime == db.meta["latest_mtime"] == db.latest_mtime() == expected_latest > 0
 
     with DriveDB(db_path) as db:
         assert db.meta["file_count"] == len(kept)
@@ -141,6 +145,10 @@ def test_catalog_roundtrip_backup_and_restore(tmp_path, scanned):
     drive = catalog.put_drive(db_path, result, name="テスト")
     drive_id = drive["id"]
     assert catalog.find_matching_drives(result.volume, result.root) == [drive]
+    assert drive["latest_mtime"] == result.stats.latest_mtime == catalog.latest_mtime(drive_id)
+    # 記録を持たない (古いカタログの) ドライブでは DB から求めて、ドライブ情報に入れる
+    del drive["latest_mtime"]
+    assert catalog.latest_mtime(drive_id) == result.stats.latest_mtime and drive["latest_mtime"] == result.stats.latest_mtime
 
     # 再スキャンして更新 → 旧世代が 1 つ残る
     (tree / "new.txt").write_bytes(b"12345")

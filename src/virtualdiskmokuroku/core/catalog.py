@@ -66,7 +66,7 @@ _SESSION_PREFIX = "session-"
 _SNAPSHOT_KEYS = (
     "label", "serial", "filesystem", "volume_guid", "drive_type", "device_vendor", "device_model",
     "device_serial", "bus_type", "root", "total_bytes", "free_bytes", "scanned_at", "source",
-    "file_count", "dir_count", "total_size", "has_context", "context_partial",
+    "file_count", "dir_count", "total_size", "latest_mtime", "has_context", "context_partial",
 )  # fmt: skip
 
 
@@ -623,6 +623,18 @@ class Catalog:
     def open_drive_db(self, drive_id: str, backup: str | None = None) -> DriveDB:
         return DriveDB(self.db_source(drive_id, FILES_DB, backup))
 
+    def latest_mtime(self, drive_id: str) -> int | None:
+        """ドライブ内で最も新しいファイルの更新日時 (FILETIME)。
+
+        登録・更新時に記録した値を返す。それより前に作られたドライブには無いので、その場合は DB から求めて
+        ドライブ情報に入れる (次にカタログを書き換えたときに保存される)。
+        """
+        drive = self.drive(drive_id)
+        if "latest_mtime" not in drive:
+            with self.open_drive_db(drive_id) as db:
+                drive["latest_mtime"] = db.latest_mtime()
+        return drive["latest_mtime"]
+
     def extract_context_db(self, drive_id: str, backup: str | None = None) -> Path | None:
         """(通常のカタログ用) 拡張コンテキスト DB をキャッシュへ展開する。カタログに無ければ None。"""
         if not self.has_member(drive_id, CONTEXT_DB, backup):
@@ -701,6 +713,7 @@ class Catalog:
             file_count=result.stats.file_count,
             dir_count=result.stats.dir_count,
             total_size=result.stats.total_size,
+            latest_mtime=result.stats.latest_mtime,
             has_context=context_db_path is not None,
             context_partial=context_db_path is not None and context_partial,
         )

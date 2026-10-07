@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
@@ -31,15 +32,15 @@ from PySide6.QtWidgets import (
 
 from ..core.catalog import CATALOG_EXTENSION, Catalog
 from ..core.errors import CatalogError, PasswordError
-from ..core.formatting import format_bytes, format_iso, format_size
+from ..core.formatting import format_bytes, format_filetime, format_iso, format_size
 from .settings_dialogs import ask_new_password, ask_password
 from .style import apply_selection_style
 
 ROLE_DRIVE = Qt.ItemDataRole.UserRole + 1  # ドライブの行: drive_id
 ROLE_GROUP = Qt.ItemDataRole.UserRole + 2  # グループの行: グループ名
 
-COL_NAME, COL_FILES, COL_SIZE, COL_CONTEXT, COL_SCANNED = range(5)
-HEADERS = ["名前", "ファイル数", "カタログ内サイズ", "拡張コンテキスト", "スキャン日時"]
+COL_NAME, COL_FILES, COL_SIZE, COL_CONTEXT, COL_LATEST = range(5)
+HEADERS = ["名前", "ファイル数", "カタログ内サイズ", "拡張コンテキスト", "最新の更新日時"]
 _MIME = "application/x-virtualdiskmokuroku-drives"
 _CATALOG_FILTER = f"カタログ (*{CATALOG_EXTENSION})"
 _TITLE = "ドライブの整理"
@@ -229,7 +230,7 @@ class OrganizeDialog(QDialog):
                 root.appendRow(self._group_cells(parent))
             parent.appendRow(cells)
         self.tree.expandAll()
-        for column, width in enumerate((270, 80, 110, 120, 140)):
+        for column, width in enumerate((260, 80, 110, 120, 150)):
             self.tree.setColumnWidth(column, width)
         self.tree.header().setStretchLastSection(True)
 
@@ -265,11 +266,22 @@ class OrganizeDialog(QDialog):
             tooltip += f"\nバックアップ世代: {format_size(backup)} ({format_bytes(backup)} バイト)"
         size.setToolTip(tooltip)
         context = QStandardItem(self._context_text(drive))
-        scanned = QStandardItem(format_iso(drive.get("scanned_at")))
-        cells = [name, files, size, context, scanned]
+        latest = QStandardItem(format_filetime(self._latest_mtime(drive)))
+        latest.setToolTip(
+            "ドライブ内で最も新しいファイルの更新日時\n"
+            f"スキャン (取り込み) 日時: {format_iso(drive.get('scanned_at'))}"
+        )
+        cells = [name, files, size, context, latest]
         for cell in cells:
             cell.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsDragEnabled)
         return cells
+
+    def _latest_mtime(self, drive: dict) -> int | None:
+        """最新の更新日時。古いカタログで記録が無ければ DB から求める (開けなければ空欄)。"""
+        try:
+            return self.catalog.latest_mtime(drive["id"])
+        except (CatalogError, OSError, sqlite3.Error):
+            return None
 
     @staticmethod
     def _context_text(drive: dict) -> str:

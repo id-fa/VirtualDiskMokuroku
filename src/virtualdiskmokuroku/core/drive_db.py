@@ -68,6 +68,7 @@ class BuildStats:
     dir_count: int = 0
     total_size: int = 0
     ignored_count: int = 0
+    latest_mtime: int | None = None  # ドライブ内で最も新しいファイルの更新日時 (FILETIME)
 
 
 class _OpenDir:
@@ -197,6 +198,7 @@ def _build(out: WorkDb, stage: WorkDb, root, entries, ignore, meta, progress, is
         file_count=stats.file_count,
         dir_count=stats.dir_count,
         total_size=stats.total_size,
+        latest_mtime=stats.latest_mtime,
         ignored_count=stats.ignored_count,
         ignore_patterns=list(ignore.patterns) if ignore else [],
     )
@@ -221,6 +223,7 @@ def _write_entries(out: WorkDb, stage, ignore, progress, check_cancel) -> BuildS
     next_id = 1
     written = 0
     ignored = 0
+    latest_mtime: int | None = None
     skip_prefix: str | None = None
     previous_key: str | None = None
 
@@ -298,6 +301,8 @@ def _write_entries(out: WorkDb, stage, ignore, progress, check_cancel) -> BuildS
             next_id += 1
             top.size += size or 0
             top.files += 1
+            if mtime is not None and (latest_mtime is None or mtime > latest_mtime):
+                latest_mtime = mtime
 
         if len(rows) >= _BATCH:
             flush()
@@ -311,7 +316,7 @@ def _write_entries(out: WorkDb, stage, ignore, progress, check_cancel) -> BuildS
         flush()
     if progress:
         progress("build", written)
-    return BuildStats(root_dir.files, root_dir.dirs, root_dir.size, ignored)
+    return BuildStats(root_dir.files, root_dir.dirs, root_dir.size, ignored, latest_mtime)
 
 
 # --------------------------------------------------------------------------------------
@@ -385,6 +390,12 @@ class DriveDB:
     def get(self, entry_id: int) -> Entry | None:
         row = self._conn.execute(f"SELECT {_COLUMNS} FROM entries WHERE id = ?", (entry_id,)).fetchone()
         return Entry(*row) if row else None
+
+    def latest_mtime(self) -> int | None:
+        """最も新しいファイルの更新日時 (FILETIME)。取込時に meta に記録した値があればそれを使う。"""
+        if "latest_mtime" in self.meta:
+            return self.meta["latest_mtime"]
+        return self._conn.execute("SELECT MAX(mtime) FROM entries WHERE is_dir = 0").fetchone()[0]
 
     def _select(
         self,

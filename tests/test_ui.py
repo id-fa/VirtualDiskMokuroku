@@ -737,6 +737,12 @@ def test_organize_dialog(window, tmp_path, monkeypatch):
     storage = catalog.storage_sizes()
     assert model.item(2, COL_SIZE).text() == format_size(storage[three][0]) != format_size(catalog.drive(three)["total_size"])
     assert "カタログ内" in model.item(2, COL_SIZE).toolTip()
+    # 日時列はスキャン日時ではなく、ドライブ内で最も新しいファイルの更新日時
+    from virtualdiskmokuroku.core.formatting import format_filetime
+    from virtualdiskmokuroku.ui.organize_dialog import COL_LATEST
+
+    assert model.item(2, COL_LATEST).text() == format_filetime(catalog.drive(three)["latest_mtime"]) != ""
+    assert "スキャン" in model.item(2, COL_LATEST).toolTip()
     assert not dialog.copy_button.isEnabled()  # 選択なし
 
     # 新しいグループに、選択中のドライブを入れる

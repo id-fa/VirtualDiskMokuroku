@@ -50,7 +50,7 @@ from ..core import export
 from ..core.catalog import CATALOG_EXTENSION, CONTEXT_DB, LEGACY_CATALOG_EXTENSIONS, Catalog
 from ..core.drive_db import ROOT_ID, DriveDB, split_terms
 from ..core.errors import CatalogError, PasswordError
-from ..core.formatting import format_bytes, format_iso, format_size
+from ..core.formatting import format_bytes, format_filetime, format_iso, format_size
 from ..core.search import SCOPE_ALL, SCOPE_FOLDER, SCOPE_SUBTREE, DbPool, DriveRef, QuerySpec, Row, iter_rows
 from ..core.settings import AppSettings
 from .import_dialog import ImportDialog
@@ -700,6 +700,8 @@ class MainWindow(QMainWindow):
             f"ファイル {drive.get('file_count', 0):,} / フォルダ {drive.get('dir_count', 0):,} / 合計 {format_size(drive.get('total_size'))}",
             f"スキャン日時: {format_iso(drive.get('scanned_at'))}",
         ]
+        if drive.get("latest_mtime") is not None:
+            lines.append(f"最新の更新日時: {format_filetime(drive['latest_mtime'])} (ドライブ内で最も新しいファイル)")
         return "\n".join(lines)
 
     def _reload_tree(self) -> None:
