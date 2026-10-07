@@ -472,6 +472,21 @@ class Catalog:
         with self._lock, zipfile.ZipFile(self.path) as archive:
             return self._member(drive_id, name, backup) in archive.NameToInfo
 
+    def storage_sizes(self) -> dict[str, tuple[int, int]]:
+        """各ドライブがカタログ内で占めるバイト数 (圧縮・暗号化後の大きさ)。
+
+        戻り値は drive_id → (現行世代の files.db + context.db, バックアップ世代の合計)。
+        """
+        sizes: dict[str, list[int]] = {}
+        with self._lock, zipfile.ZipFile(self.path) as archive:
+            for info in archive.infolist():
+                parts = info.filename.split("/")  # drives/<drive_id>/[backup/<stamp>/]<name>
+                if len(parts) < 3 or parts[0] != "drives":
+                    continue
+                entry = sizes.setdefault(parts[1], [0, 0])
+                entry[1 if parts[2] == "backup" else 0] += info.compress_size
+        return {drive_id: (current, backup) for drive_id, (current, backup) in sizes.items()}
+
     def extract_db(self, drive_id: str, name: str = FILES_DB, backup: str | None = None) -> Path:
         """通常のカタログ内の DB をキャッシュへ展開し、そのパスを返す(展開済みなら再利用)。"""
         if self.encrypted:

@@ -31,7 +31,7 @@ from PySide6.QtWidgets import (
 
 from ..core.catalog import CATALOG_EXTENSION, Catalog
 from ..core.errors import CatalogError, PasswordError
-from ..core.formatting import format_iso, format_size
+from ..core.formatting import format_bytes, format_iso, format_size
 from .settings_dialogs import ask_new_password, ask_password
 from .style import apply_selection_style
 
@@ -39,7 +39,7 @@ ROLE_DRIVE = Qt.ItemDataRole.UserRole + 1  # ドライブの行: drive_id
 ROLE_GROUP = Qt.ItemDataRole.UserRole + 2  # グループの行: グループ名
 
 COL_NAME, COL_FILES, COL_SIZE, COL_CONTEXT, COL_SCANNED = range(5)
-HEADERS = ["名前", "ファイル数", "合計サイズ", "拡張コンテキスト", "スキャン日時"]
+HEADERS = ["名前", "ファイル数", "カタログ内サイズ", "拡張コンテキスト", "スキャン日時"]
 _MIME = "application/x-virtualdiskmokuroku-drives"
 _CATALOG_FILTER = f"カタログ (*{CATALOG_EXTENSION})"
 _TITLE = "ドライブの整理"
@@ -213,8 +213,12 @@ class OrganizeDialog(QDialog):
     def _fill_tree(self) -> None:
         groups: dict[str, QStandardItem] = {}
         root = self.model.invisibleRootItem()
+        try:
+            sizes = self.catalog.storage_sizes()
+        except (CatalogError, OSError):
+            sizes = {}
         for drive in self.catalog.drives:
-            cells = self._drive_cells(drive)
+            cells = self._drive_cells(drive, sizes.get(drive["id"], (0, 0)))
             group = drive.get("group")
             if not group:
                 root.appendRow(cells)
@@ -225,7 +229,7 @@ class OrganizeDialog(QDialog):
                 root.appendRow(self._group_cells(parent))
             parent.appendRow(cells)
         self.tree.expandAll()
-        for column, width in enumerate((280, 80, 90, 120, 140)):
+        for column, width in enumerate((270, 80, 110, 120, 140)):
             self.tree.setColumnWidth(column, width)
         self.tree.header().setStretchLastSection(True)
 
@@ -247,13 +251,19 @@ class OrganizeDialog(QDialog):
             cell.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         return cells
 
-    def _drive_cells(self, drive: dict) -> list[QStandardItem]:
+    def _drive_cells(self, drive: dict, storage: tuple[int, int]) -> list[QStandardItem]:
+        """``storage`` はカタログ内で占めるバイト数 (現行世代, バックアップ世代の合計)。"""
         name = QStandardItem(self._drive_icon, drive["name"])
         name.setData(drive["id"], ROLE_DRIVE)
         files = QStandardItem(f"{drive.get('file_count') or 0:,}")
         files.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        size = QStandardItem(format_size(drive.get("total_size")))
+        current, backup = storage
+        size = QStandardItem(format_size(current))
         size.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        tooltip = f"カタログ内でファイルリストと拡張コンテキストが占めるサイズ: {format_bytes(current)} バイト"
+        if backup:
+            tooltip += f"\nバックアップ世代: {format_size(backup)} ({format_bytes(backup)} バイト)"
+        size.setToolTip(tooltip)
         context = QStandardItem(self._context_text(drive))
         scanned = QStandardItem(format_iso(drive.get("scanned_at")))
         cells = [name, files, size, context, scanned]

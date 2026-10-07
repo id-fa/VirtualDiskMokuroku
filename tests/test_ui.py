@@ -730,6 +730,13 @@ def test_organize_dialog(window, tmp_path, monkeypatch):
 
     assert model.rowCount() == 3 and dialog.layout_of_tree() == [(one, None), (two, None), (three, None)]
     assert model.item(2, COL_CONTEXT).text() == "あり"
+    # サイズ列は元データの集計ではなく、カタログ内で DB が占めるサイズ
+    from virtualdiskmokuroku.core.formatting import format_size
+    from virtualdiskmokuroku.ui.organize_dialog import COL_SIZE
+
+    storage = catalog.storage_sizes()
+    assert model.item(2, COL_SIZE).text() == format_size(storage[three][0]) != format_size(catalog.drive(three)["total_size"])
+    assert "カタログ内" in model.item(2, COL_SIZE).toolTip()
     assert not dialog.copy_button.isEnabled()  # 選択なし
 
     # 新しいグループに、選択中のドライブを入れる

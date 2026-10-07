@@ -302,6 +302,16 @@ def test_reorganize_and_copy_drives(tmp_path, scanned):
     catalog.set_drive_group(b, "写真")
     catalog.put_drive(db_path, result, drive_id=a, context_db_path=fake_context)  # バックアップ世代にも context.db が残る
     stamp = catalog.drive(a)["backups"][0]["stamp"]
+
+    # カタログ内で占めるサイズ (圧縮後) は現行世代とバックアップ世代に分けて集計される
+    sizes = catalog.storage_sizes()
+    with zipfile.ZipFile(catalog.path) as archive:
+        compressed = {info.filename: info.compress_size for info in archive.infolist()}
+    assert sizes[a] == (
+        compressed[f"drives/{a}/{FILES_DB}"] + compressed[f"drives/{a}/context.db"],
+        compressed[f"drives/{a}/backup/{stamp}/{FILES_DB}"] + compressed[f"drives/{a}/backup/{stamp}/context.db"],
+    )
+    assert sizes[c] == (compressed[f"drives/{c}/{FILES_DB}"], 0) and sizes[a][0] > 0 and sizes[a][1] > 0
     assert catalog.extract_context_db(a) is not None and catalog.extract_context_db(a, backup=stamp) is not None
 
     # 並び替え + グループ変更 + 1 台削除 + 1 台は拡張コンテキストだけ削除 (書き換えは 1 回)
