@@ -26,6 +26,7 @@ from .core.es_client import RawEntry
 from .core.scanner import ScanResult
 from .core.volume import VolumeInfo
 from .core.workdb import WorkDb, keep_temp_in_memory, open_shared_memory_db, remove_quietly
+from .i18n import tr
 
 SOURCE_VCDCASE = "vcdcase"
 CONTEXT_KIND = "vcdcase"
@@ -65,7 +66,7 @@ def import_vcdcase(
     path = Path(path)
     case = vcdcase.read_case(path, is_cancelled=is_cancelled)
     if not case.drives:
-        raise CatalogError(f"取り込めるドライブがありません: {path}")
+        raise CatalogError(tr('取り込めるドライブがありません: {path}').format(path=path))
     file_time = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
 
     work_dir = None if catalog.encrypted else Path(tempfile.mkdtemp(prefix="vdmoku_import_"))
@@ -188,7 +189,7 @@ def _build_drive(
         for key, value in (("comment", drive.comment), ("group", group), ("group_comment", group_comment))
         if value
     }
-    return NewDrive(database, result, drive.label or "(名前なし)", context_db, extra), context_count
+    return NewDrive(database, result, drive.label or tr('(名前なし)'), context_db, extra), context_count
 
 
 def _build_context_db(

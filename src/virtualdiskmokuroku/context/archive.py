@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from datetime import datetime
 
 from .base import EntryWriter, Extractor, datetime_to_filetime, module_available, unix_to_filetime
+from ..i18n import tr
 
 _ZIP_EXTENSIONS = ("zip", "cbz", "jar", "epub", "apk")
 _TAR_EXTENSIONS = ("tar", "tgz", "tbz2", "txz", "tar.gz", "tar.bz2", "tar.xz")
@@ -67,7 +68,7 @@ class _Collector:
     def finish(self) -> None:
         self.writer.add_meta("inner_count", self.count)
         if self.truncated:
-            self.writer.add_meta("inner_truncated", f"先頭 {self.count} 件のみ")
+            self.writer.add_meta("inner_truncated", tr('先頭 {count} 件のみ').format(count=self.count))
 
 
 class ArchiveExtractor(Extractor):

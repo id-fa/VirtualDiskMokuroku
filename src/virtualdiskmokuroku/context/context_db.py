@@ -14,6 +14,7 @@ from typing import NamedTuple
 from ..core.drive_db import like_pattern, readonly_uri
 from ..core.workdb import keep_temp_in_memory
 from .base import EntryWriter
+from ..i18n import tr
 
 SCHEMA_VERSION = 1
 STATUS_OK = "ok"
@@ -234,7 +235,7 @@ def redecode_text(target: str | os.PathLike[str] | sqlite3.Connection, entry_id:
     try:
         row = conn.execute("SELECT raw FROM text_content WHERE entry_id = ?", (entry_id,)).fetchone()
         if row is None or row[0] is None:
-            raise KeyError(f"再デコードできるテキストがありません: entry_id={entry_id}")
+            raise KeyError(tr('再デコードできるテキストがありません: entry_id={entry_id}').format(entry_id=entry_id))
         content = bytes(row[0]).decode(encoding, errors="replace").removeprefix("﻿")
         with conn:
             conn.execute("UPDATE text_content SET encoding = ?, content = ? WHERE entry_id = ?", (encoding, content, entry_id))

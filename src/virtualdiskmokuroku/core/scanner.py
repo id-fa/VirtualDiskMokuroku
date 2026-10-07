@@ -18,6 +18,7 @@ from .es_client import EsClient, EsError, RawEntry
 from .ignore import IgnoreRules
 from .volume import VolumeInfo, get_volume_info
 from .workdb import DEFAULT_MEMORY_LIMIT
+from ..i18n import tr
 
 SOURCE_AUTO = "auto"
 SOURCE_EVERYTHING = "everything"
@@ -107,15 +108,15 @@ def choose_source(root: str, es: EsClient | None, requested: str = SOURCE_AUTO) 
         return SOURCE_WALK, warnings
     if es is None:
         if requested == SOURCE_EVERYTHING:
-            raise EsError("es.exe が設定されていません")
-        warnings.append("es.exe が見つからないため、直接走査で取得しました")
+            raise EsError(tr('es.exe が設定されていません'))
+        warnings.append(tr('es.exe が見つからないため、直接走査で取得しました'))
         return SOURCE_WALK, warnings
     try:
         count = es.result_count(root)
     except EsError as error:
         if requested == SOURCE_EVERYTHING:
             raise
-        warnings.append(f"Everything を利用できないため、直接走査で取得しました ({error})")
+        warnings.append(tr('Everything を利用できないため、直接走査で取得しました ({error})').format(error=error))
         return SOURCE_WALK, warnings
     if count > 0 or requested == SOURCE_EVERYTHING:
         return SOURCE_EVERYTHING, warnings
@@ -145,7 +146,7 @@ def scan_to_db(
     root = os.path.abspath(root)
     volume = get_volume_info(root)
     if not volume.ready:
-        raise OSError(f"ドライブ {volume.root} の準備ができていません(メディア未挿入など)")
+        raise OSError(tr('ドライブ {root} の準備ができていません(メディア未挿入など)').format(root=volume.root))
 
     chosen, warnings = choose_source(root, es, source)
     if progress:
@@ -174,8 +175,8 @@ def scan_to_db(
         database = Path(db_path)
     else:
         if spill_dir is None:
-            raise ValueError("メモリ上に作る場合は spill_dir が必要です")
+            raise ValueError(tr('メモリ上に作る場合は spill_dir が必要です'))
         database, stats = build_drive_db_in_memory(root, entries, memory_limit=memory_limit, spill_dir=spill_dir, **common)
     if walk_errors:
-        warnings.append(f"読み取れなかったフォルダ/ファイルが {len(walk_errors)} 件あります(例: {walk_errors[0]})")
+        warnings.append(tr('読み取れなかったフォルダ/ファイルが {walk_errors_count} 件あります(例: {0})').format(walk_errors[0], walk_errors_count=len(walk_errors)))
     return ScanResult(root, chosen, stats, volume, scanned_at, meta, warnings, database)

@@ -27,6 +27,7 @@ import zlib
 from typing import BinaryIO, NamedTuple
 
 from .errors import CatalogError, PasswordError
+from ..i18n import tr
 
 MAGIC = b"VDMOKU-ENC1\0"
 CHUNK_SIZE = 1 << 20
@@ -60,7 +61,7 @@ def _backend():
         from cryptography.hazmat.primitives.kdf.hkdf import HKDF
     except ImportError as error:
         raise CatalogError(
-            "暗号化カタログを扱うには cryptography ライブラリが必要です (pip install cryptography)"
+            tr('暗号化カタログを扱うには cryptography ライブラリが必要です (pip install cryptography)')
         ) from error
     return AESGCM, HKDF, hashes, InvalidTag
 
@@ -98,7 +99,7 @@ def wrap_key(data_key: bytes, password: str, kdf: dict | None = None) -> dict:
 def create_key(password: str, kdf: dict | None = None) -> tuple[dict, bytes]:
     """新しいデータ鍵を作る。戻り値は (保存する記録, データ鍵)。"""
     if not password:
-        raise PasswordError("暗号化にはパスワードが必要です")
+        raise PasswordError(tr('暗号化にはパスワードが必要です'))
     data_key = os.urandom(_KEY_SIZE)
     return wrap_key(data_key, password, kdf), data_key
 
@@ -108,18 +109,18 @@ def unlock_key(record: dict, password: str) -> bytes:
     AESGCM, _hkdf, _hashes, InvalidTag = _backend()
     try:
         if record.get("kdf") != "scrypt" or record.get("cipher") != "AES-256-GCM":
-            raise CatalogError("このカタログの暗号化方式には対応していません")
+            raise CatalogError(tr('このカタログの暗号化方式には対応していません'))
         key = _key_encryption_key(
             password, bytes.fromhex(record["salt"]), int(record["n"]), int(record["r"]), int(record["p"])
         )
         nonce = bytes.fromhex(record["nonce"])
         wrapped = bytes.fromhex(record["wrapped_key"])
     except (KeyError, ValueError, TypeError) as error:
-        raise CatalogError(f"カタログの暗号化情報が壊れています ({error})") from error
+        raise CatalogError(tr('カタログの暗号化情報が壊れています ({error})').format(error=error)) from error
     try:
         return AESGCM(key).decrypt(nonce, wrapped, _KEY_WRAP_AAD)
     except InvalidTag:
-        raise PasswordError("パスワードが違います") from None
+        raise PasswordError(tr('パスワードが違います')) from None
 
 
 # --------------------------------------------------------------------------------------
@@ -190,10 +191,10 @@ def encrypt_stream(
 def read_header(source: BinaryIO) -> MemberHeader:
     raw = source.read(_HEADER.size)
     if len(raw) != _HEADER.size:
-        raise CatalogError("暗号化データが壊れています(ヘッダが足りません)")
+        raise CatalogError(tr('暗号化データが壊れています(ヘッダが足りません)'))
     magic, flags, plain_size, salt = _HEADER.unpack(raw)
     if magic != MAGIC:
-        raise CatalogError("暗号化データの形式が違います")
+        raise CatalogError(tr('暗号化データの形式が違います'))
     return MemberHeader(flags, None if plain_size == UNKNOWN_SIZE else plain_size, salt, raw)
 
 
@@ -204,7 +205,7 @@ def decrypt_stream(data_key: bytes, context: str, source: BinaryIO, dest: Binary
     cipher = _member_cipher(data_key, header.salt)
     associated = _associated_data(context, header.raw)
     decompressor = zlib.decompressobj() if header.flags & FLAG_ZLIB else None
-    damaged = CatalogError("暗号化データが壊れているか、改ざんされています")
+    damaged = CatalogError(tr('暗号化データが壊れているか、改ざんされています'))
 
     counter = 0
     prefix = source.read(4)

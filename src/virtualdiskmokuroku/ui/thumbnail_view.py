@@ -19,6 +19,7 @@ from ..core.formatting import format_filetime, format_size
 from ..core.search import Row
 from .models import type_text
 from .style import SELECTION_BACKGROUND, SELECTION_TEXT
+from ..i18n import tr
 
 VIEW_DETAILS = "details"  # 従来の詳細一覧 (表)
 VIEW_TILES = "tiles"  # サムネイルを敷き詰める
@@ -130,13 +131,13 @@ class ThumbnailDelegate(QStyledItemDelegate):
         entry = row.entry
         lines = []
         if info.resolution:
-            lines.append(f"解像度: {info.resolution}")
+            lines.append(tr('解像度: {resolution}').format(resolution=info.resolution))
         if entry.size is not None:
-            lines.append(f"サイズ: {format_size(entry.size)}")
-        lines.append(f"更新日時: {format_filetime(entry.mtime)}")
-        lines.append(f"種類: {type_text(row)}")
+            lines.append(tr('サイズ: {size}').format(size=format_size(entry.size)))
+        lines.append(tr('更新日時: {mtime}').format(mtime=format_filetime(entry.mtime)))
+        lines.append(tr('種類: {type_text}').format(type_text=type_text(row)))
         if self.show_location:
-            lines.append(f"場所: {row.location}")
+            lines.append(tr('場所: {location}').format(location=row.location))
         return lines
 
     def item_size(self, font: QFont) -> QSize:

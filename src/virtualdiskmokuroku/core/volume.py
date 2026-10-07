@@ -11,6 +11,7 @@ import os
 import struct
 from ctypes import wintypes
 from dataclasses import asdict, dataclass
+from ..i18n import tr
 
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
@@ -81,7 +82,7 @@ class VolumeInfo:
 
     @property
     def display_name(self) -> str:
-        label = self.label or {"cdrom": "CD/DVD", "removable": "リムーバブル"}.get(self.drive_type, "ローカル ディスク")
+        label = self.label or {"cdrom": "CD/DVD", "removable": tr('リムーバブル')}.get(self.drive_type, tr('ローカル ディスク'))
         return f"{label} ({self.root[:2]})"
 
 

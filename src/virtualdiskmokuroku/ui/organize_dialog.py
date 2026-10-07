@@ -35,6 +35,7 @@ from ..core.errors import CatalogError, PasswordError
 from ..core.formatting import format_bytes, format_filetime, format_iso, format_size
 from .settings_dialogs import ask_new_password, ask_password
 from .style import apply_selection_style
+from ..i18n import tr
 
 ROLE_DRIVE = Qt.ItemDataRole.UserRole + 1  # ドライブの行: drive_id
 ROLE_GROUP = Qt.ItemDataRole.UserRole + 2  # グループの行: グループ名
@@ -42,8 +43,8 @@ ROLE_GROUP = Qt.ItemDataRole.UserRole + 2  # グループの行: グループ名
 COL_NAME, COL_FILES, COL_SIZE, COL_CONTEXT, COL_LATEST = range(5)
 HEADERS = ["名前", "ファイル数", "カタログ内サイズ", "拡張コンテキスト", "最新の更新日時"]
 _MIME = "application/x-virtualdiskmokuroku-drives"
-_CATALOG_FILTER = f"カタログ (*{CATALOG_EXTENSION})"
-_TITLE = "ドライブの整理"
+_CATALOG_FILTER = "カタログ (*{ext})"  # tr() を通してから CATALOG_EXTENSION を埋める
+_TITLE = "ドライブの整理"  # 表示するときに tr() を通す
 
 
 def _tree_position(item: QStandardItem) -> tuple[int, ...]:
@@ -66,7 +67,7 @@ class DriveTreeModel(QStandardItemModel):
 
     def __init__(self, parent=None):
         super().__init__(0, len(HEADERS), parent)
-        self.setHorizontalHeaderLabels(HEADERS)
+        self.setHorizontalHeaderLabels([tr(header) for header in HEADERS])
         self._dragging: list[QStandardItem] = []
 
     def supportedDropActions(self) -> Qt.DropAction:
@@ -135,7 +136,7 @@ class OrganizeDialog(QDialog):
         icons = QFileIconProvider()
         self._drive_icon = icons.icon(QFileIconProvider.IconType.Drive)
         self._group_icon = icons.icon(QFileIconProvider.IconType.Folder)
-        self.setWindowTitle(_TITLE)
+        self.setWindowTitle(tr(_TITLE))
         self.resize(900, 520)
         self._build_ui()
         self._fill_tree()
@@ -165,19 +166,18 @@ class OrganizeDialog(QDialog):
             item.clicked.connect(lambda _checked=False: slot())
             return item
 
-        self.up_button = button("上へ(&U)", self.move_up)
-        self.down_button = button("下へ(&D)", self.move_down)
-        self.new_group_button = button("新しいグループ(&N)…", self.new_group)
-        self.rename_group_button = button("グループ名を変更(&R)…", self.rename_group)
-        self.ungroup_button = button("グループから外す(&G)", self.ungroup)
-        self.context_button = button("拡張コンテキストを削除(&X)", self.toggle_context_removal)
-        self.remove_button = button("ドライブを削除(&L)", self.remove_selected)
-        self.copy_button = button("他のカタログにコピー(&C)…", self.copy_to_catalog)
+        self.up_button = button(tr('上へ(&U)'), self.move_up)
+        self.down_button = button(tr('下へ(&D)'), self.move_down)
+        self.new_group_button = button(tr('新しいグループ(&N)…'), self.new_group)
+        self.rename_group_button = button(tr('グループ名を変更(&R)…'), self.rename_group)
+        self.ungroup_button = button(tr('グループから外す(&G)'), self.ungroup)
+        self.context_button = button(tr('拡張コンテキストを削除(&X)'), self.toggle_context_removal)
+        self.remove_button = button(tr('ドライブを削除(&L)'), self.remove_selected)
+        self.copy_button = button(tr('他のカタログにコピー(&C)…'), self.copy_to_catalog)
         self.copy_button.setToolTip(
-            "選んだドライブの現在の内容 (ファイルリストと拡張コンテキスト) を別のカタログに追加します。\n"
-            "バックアップ世代はコピーしません。コピーはすぐに行われ、グループはこのツリーでの状態になります"
+            tr('選んだドライブの現在の内容 (ファイルリストと拡張コンテキスト) を別のカタログに追加します。\nバックアップ世代はコピーしません。コピーはすぐに行われ、グループはこのツリーでの状態になります')
         )
-        self.context_button.setToolTip("ファイルリストは残し、サムネイル・テキスト内容などの拡張コンテキストだけを削除します。\nもう一度押すと取りやめます")
+        self.context_button.setToolTip(tr('ファイルリストは残し、サムネイル・テキスト内容などの拡張コンテキストだけを削除します。\nもう一度押すと取りやめます'))
 
         buttons = QVBoxLayout()
         for item in (self.up_button, self.down_button):
@@ -204,8 +204,7 @@ class OrganizeDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
-            "ドラッグ & ドロップで並び替えやグループ間の移動ができます (複数選択可)。"
-            "並び替え・グループの変更・削除は OK を押したときにカタログへ書き込みます。"
+            tr('ドラッグ & ドロップで並び替えやグループ間の移動ができます (複数選択可)。並び替え・グループの変更・削除は OK を押したときにカタログへ書き込みます。')
         ))  # fmt: skip
         layout.addLayout(body, 1)
         layout.addWidget(self.summary)
@@ -261,15 +260,14 @@ class OrganizeDialog(QDialog):
         current, backup = storage
         size = QStandardItem(format_size(current))
         size.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        tooltip = f"カタログ内でファイルリストと拡張コンテキストが占めるサイズ: {format_bytes(current)} バイト"
+        tooltip = tr('カタログ内でファイルリストと拡張コンテキストが占めるサイズ: {current} バイト').format(current=format_bytes(current))
         if backup:
-            tooltip += f"\nバックアップ世代: {format_size(backup)} ({format_bytes(backup)} バイト)"
+            tooltip += tr('\nバックアップ世代: {backup} ({backup2} バイト)').format(backup=format_size(backup), backup2=format_bytes(backup))
         size.setToolTip(tooltip)
         context = QStandardItem(self._context_text(drive))
         latest = QStandardItem(format_filetime(self._latest_mtime(drive)))
         latest.setToolTip(
-            "ドライブ内で最も新しいファイルの更新日時\n"
-            f"スキャン (取り込み) 日時: {format_iso(drive.get('scanned_at'))}"
+            tr('ドライブ内で最も新しいファイルの更新日時\nスキャン (取り込み) 日時: {scanned_at}').format(scanned_at=format_iso(drive.get('scanned_at')))
         )
         cells = [name, files, size, context, latest]
         for cell in cells:
@@ -286,8 +284,8 @@ class OrganizeDialog(QDialog):
     @staticmethod
     def _context_text(drive: dict) -> str:
         if not drive.get("has_context"):
-            return "なし"
-        return "あり (一部)" if drive.get("context_partial") else "あり"
+            return tr('なし')
+        return tr('あり (一部)') if drive.get("context_partial") else tr('あり')
 
     # ------------------------------------------------------------------ 選択
     def _name_item(self, index: QModelIndex) -> QStandardItem | None:
@@ -334,9 +332,9 @@ class OrganizeDialog(QDialog):
         with_context = [item for item in selected_drives if self._has_context(item)]
         self.context_button.setEnabled(bool(with_context))
         if with_context and all(item.data(ROLE_DRIVE) in self._context_drop for item in with_context):
-            self.context_button.setText("拡張コンテキストの削除を取りやめ(&X)")
+            self.context_button.setText(tr('拡張コンテキストの削除を取りやめ(&X)'))
         else:
-            self.context_button.setText("拡張コンテキストを削除(&X)")
+            self.context_button.setText(tr('拡張コンテキストを削除(&X)'))
         self._update_summary()
 
     def _has_context(self, item: QStandardItem) -> bool:
@@ -345,10 +343,10 @@ class OrganizeDialog(QDialog):
     def _update_summary(self) -> None:
         parts = []
         if self._removed:
-            parts.append(f"OK を押すと {len(self._removed)} 台のドライブを削除します (バックアップ世代も含む)")
+            parts.append(tr('OK を押すと {_removed_count} 台のドライブを削除します (バックアップ世代も含む)').format(_removed_count=len(self._removed)))
         if self._context_drop:
-            parts.append(f"{len(self._context_drop)} 台のドライブの拡張コンテキストを削除します")
-        self.summary.setText("。".join(parts) + ("。キャンセルで取りやめます" if parts else ""))
+            parts.append(tr('{_context_drop_count} 台のドライブの拡張コンテキストを削除します').format(_context_drop_count=len(self._context_drop)))
+        self.summary.setText("。".join(parts) + (tr('。キャンセルで取りやめます') if parts else ""))
 
     def _after_drop(self) -> None:
         self.tree.expandAll()
@@ -384,7 +382,7 @@ class OrganizeDialog(QDialog):
         """新しいグループを作り、選択中のドライブを入れる。"""
         drives = self._selected_drive_items()
         if name is None:
-            name, accepted = QInputDialog.getText(self, "新しいグループ", "グループ名:")
+            name, accepted = QInputDialog.getText(self, tr('新しいグループ'), tr('グループ名:'))
             if not accepted:
                 return
         name = name.strip()
@@ -392,7 +390,7 @@ class OrganizeDialog(QDialog):
             return
         existing = self._group_item_named(name)
         if existing is not None:
-            QMessageBox.warning(self, _TITLE, f"グループ「{name}」は既にあります。")
+            QMessageBox.warning(self, tr(_TITLE), tr('グループ「{name}」は既にあります。').format(name=name))
             return
         group = self._group_item(name)
         position = self.model.rowCount()
@@ -419,7 +417,7 @@ class OrganizeDialog(QDialog):
             return
         group = items[0]
         if name is None:
-            name, accepted = QInputDialog.getText(self, "グループ名を変更", "グループ名:", text=group.text())
+            name, accepted = QInputDialog.getText(self, tr('グループ名を変更'), tr('グループ名:'), text=group.text())
             if not accepted:
                 return
         name = name.strip()
@@ -427,7 +425,7 @@ class OrganizeDialog(QDialog):
             return
         other = self._group_item_named(name)
         if other is not None:
-            answer = QMessageBox.question(self, _TITLE, f"グループ「{name}」は既にあります。1 つにまとめますか?")
+            answer = QMessageBox.question(self, tr(_TITLE), tr('グループ「{name}」は既にあります。1 つにまとめますか?').format(name=name))
             if answer != QMessageBox.StandardButton.Yes:
                 return
             drives = [group.child(row) for row in range(group.rowCount())]
@@ -468,7 +466,7 @@ class OrganizeDialog(QDialog):
             cell = holder.child(item.row(), COL_CONTEXT)
             drive = self.catalog.drive(item.data(ROLE_DRIVE))
             pending = item.data(ROLE_DRIVE) in self._context_drop
-            cell.setText("削除予定" if pending else self._context_text(drive))
+            cell.setText(tr('削除予定') if pending else self._context_text(drive))
             cell.setData(QBrush(Qt.GlobalColor.red) if pending else None, Qt.ItemDataRole.ForegroundRole)
         self._update_buttons()
 
@@ -481,10 +479,10 @@ class OrganizeDialog(QDialog):
         if drives:
             names = "\n".join(f"  {item.text()}" for item in drives[:10])
             if len(drives) > 10:
-                names += f"\n  … ほか {len(drives) - 10} 台"
+                names += tr('\n  … ほか {0} 台').format(len(drives) - 10)
             answer = QMessageBox.question(
-                self, _TITLE,
-                f"{len(drives)} 台のドライブを削除予定にします (OK を押したときにカタログから削除されます)。\n\n{names}",
+                self, tr(_TITLE),
+                tr('{drives_count} 台のドライブを削除予定にします (OK を押したときにカタログから削除されます)。\n\n{names}').format(drives_count=len(drives), names=names),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
             )  # fmt: skip
             if answer != QMessageBox.StandardButton.Yes:
@@ -509,7 +507,7 @@ class OrganizeDialog(QDialog):
         ids = [item.data(ROLE_DRIVE) for item in drives]
         if path is None:
             path, _filter = QFileDialog.getSaveFileName(
-                self, "コピー先のカタログ (既存のカタログを選ぶとそこへ追加)", "", _CATALOG_FILTER,
+                self, tr('コピー先のカタログ (既存のカタログを選ぶとそこへ追加)'), "", tr(_CATALOG_FILTER).format(ext=CATALOG_EXTENSION),
                 options=QFileDialog.Option.DontConfirmOverwrite,
             )  # fmt: skip
             if not path:
@@ -518,18 +516,18 @@ class OrganizeDialog(QDialog):
                 path += CATALOG_EXTENSION
         try:
             if Path(path).resolve() == self.catalog.path.resolve():
-                raise CatalogError("いま開いているカタログ自身にはコピーできません")
+                raise CatalogError(tr('いま開いているカタログ自身にはコピーできません'))
             target = self._open_target(path, password)
             if target is None:
                 return None
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, _TITLE, f"コピー先のカタログを開けません。\n\n{error}")
+            QMessageBox.critical(self, tr(_TITLE), tr('コピー先のカタログを開けません。\n\n{error}').format(error=error))
             return None
         try:
             if self.catalog.encrypted and not target.encrypted:
                 answer = QMessageBox.warning(
-                    self, _TITLE,
-                    "コピー先は暗号化されていないカタログです。コピーしたドライブの中身は誰でも読めます。続けますか?",
+                    self, tr(_TITLE),
+                    tr('コピー先は暗号化されていないカタログです。コピーしたドライブの中身は誰でも読めます。続けますか?'),
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
                 )  # fmt: skip
                 if answer != QMessageBox.StandardButton.Yes:
@@ -541,11 +539,11 @@ class OrganizeDialog(QDialog):
             finally:
                 QApplication.restoreOverrideCursor()
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, _TITLE, f"コピーに失敗しました。\n\n{error}")
+            QMessageBox.critical(self, tr(_TITLE), tr('コピーに失敗しました。\n\n{error}').format(error=error))
             return None
         finally:
             target.close()
-        QMessageBox.information(self, _TITLE, f"{len(copied)} 台のドライブを {path} に追加しました。")
+        QMessageBox.information(self, tr(_TITLE), tr('{copied_count} 台のドライブを {path} に追加しました。').format(copied_count=len(copied), path=path))
         return copied
 
     def _open_target(self, path: str, password: str | None) -> Catalog | None:
@@ -555,26 +553,26 @@ class OrganizeDialog(QDialog):
                 return Catalog.open(path)
             while True:
                 if password is None:
-                    password = ask_password(self, "パスワード", f"{Path(path).name} のパスワード:")
+                    password = ask_password(self, tr('パスワード'), tr('{name} のパスワード:').format(name=Path(path).name))
                     if password is None:
                         return None
                 try:
                     return Catalog.open(path, password)
                 except PasswordError as error:
-                    QMessageBox.warning(self, _TITLE, str(error))
+                    QMessageBox.warning(self, tr(_TITLE), str(error))
                     password = None
         encrypt = False
         if self.catalog.encrypted and password is None:
             answer = QMessageBox.question(
-                self, _TITLE,
-                "新しいカタログを作成します。いま開いているカタログと同じように暗号化しますか?\n(パスワードは新しく設定します)",
+                self, tr(_TITLE),
+                tr('新しいカタログを作成します。いま開いているカタログと同じように暗号化しますか?\n(パスワードは新しく設定します)'),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
                 QMessageBox.StandardButton.Yes,
             )  # fmt: skip
             if answer == QMessageBox.StandardButton.Cancel:
                 return None
             if answer == QMessageBox.StandardButton.Yes:
-                password = ask_new_password(self, "暗号化のパスワード")
+                password = ask_new_password(self, tr('暗号化のパスワード'))
                 if password is None:
                     return None
                 encrypt = True
@@ -603,9 +601,8 @@ class OrganizeDialog(QDialog):
             return
         if self._removed:
             answer = QMessageBox.question(
-                self, _TITLE,
-                f"{len(self._removed)} 台のドライブをカタログから削除します。バックアップ世代も含めて削除され、元に戻せません。"
-                "\nよろしいですか?",
+                self, tr(_TITLE),
+                tr('{_removed_count} 台のドライブをカタログから削除します。バックアップ世代も含めて削除され、元に戻せません。\nよろしいですか?').format(_removed_count=len(self._removed)),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
             )  # fmt: skip
             if answer != QMessageBox.StandardButton.Yes:
@@ -617,7 +614,7 @@ class OrganizeDialog(QDialog):
         try:
             self.catalog.reorganize(layout, remove=list(self._removed), drop_context=sorted(self._context_drop))
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, _TITLE, f"カタログを書き換えられませんでした。\n\n{error}")
+            QMessageBox.critical(self, tr(_TITLE), tr('カタログを書き換えられませんでした。\n\n{error}').format(error=error))
             return
         finally:
             QApplication.restoreOverrideCursor()

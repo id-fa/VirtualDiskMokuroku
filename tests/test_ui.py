@@ -699,6 +699,53 @@ def test_drive_groups(window, monkeypatch):
     assert window.tree_model.item(0).child(0).data(ROLE_DRIVE) == one
 
 
+def test_english_ui(app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QApplication as _QApplication
+
+    from virtualdiskmokuroku import i18n
+    from virtualdiskmokuroku.ui.app import install_qt_translator
+    from virtualdiskmokuroku.ui.organize_dialog import OrganizeDialog
+    from virtualdiskmokuroku.ui.settings_dialogs import AppSettingsDialog
+
+    QSettings.setPath(QSettings.Format.IniFormat, QSettings.Scope.UserScope, str(tmp_path / "qsettings"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.delenv(i18n.ENV_VAR, raising=False)
+    assert i18n.set_language("en") == "en"
+    try:
+        assert not install_qt_translator(_QApplication.instance())  # 英語は Qt の既定なので翻訳は入れない
+        main = MainWindow(AppSettings())
+        assert [item.text() for item in main.menuBar().actions()] == ["&File", "&Edit", "&View", "&Drive", "&Settings", "&Help"]
+        main.close_catalog()
+        assert main.items_label.text() == "No catalog is open"
+        assert main.table_model.headerData(0, Qt.Orientation.Horizontal) == "Name"
+        assert main.act_organize.text() == "&Organize drives…"
+        assert main.windowTitle().startswith("VirtualDiskMokuroku ")
+        catalog = Catalog.create(tmp_path / "en.vdmoku")
+        assert main.open_catalog(catalog.path)
+        assert "No drives are registered" in main.items_label.text()
+        dialog = OrganizeDialog(catalog, main)
+        assert dialog.windowTitle() == "Organize drives"
+        assert [dialog.model.headerData(column, Qt.Orientation.Horizontal) for column in range(2)] == ["Name", "Files"]
+        settings = AppSettings()
+        settings_dialog = AppSettingsDialog(settings, main)
+        assert settings_dialog.windowTitle() == "Application settings"
+        settings_dialog._language.setCurrentIndex(settings_dialog._language.findData("ja"))
+        settings_dialog.accept()
+        assert settings.language == "ja" and AppSettings.load().language == "ja"
+        main.close()
+        # エラーメッセージ (core) も英語になる
+        from virtualdiskmokuroku.core.errors import PasswordError
+
+        with pytest.raises(PasswordError, match="Wrong password"):
+            Catalog.open(Catalog.create(tmp_path / "pw.vdmoku", password="x").path, "y")
+    finally:
+        monkeypatch.setenv(i18n.ENV_VAR, "ja")
+        i18n.set_language(None)
+    assert i18n.tr("キャンセル") == "キャンセル"
+    # 日本語では Qt 自身の文言 (ボタンなど) の翻訳も入れる
+    assert install_qt_translator(_QApplication.instance())
+
+
 def test_organize_dialog(window, tmp_path, monkeypatch):
     from PySide6.QtCore import QModelIndex
     from PySide6.QtWidgets import QMessageBox

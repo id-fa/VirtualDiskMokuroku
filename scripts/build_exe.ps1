@@ -38,6 +38,6 @@ New-Item -ItemType Directory -Force $docs | Out-Null
 Copy-Item (Join-Path $root "docs\Everything導入手順.md") $docs
 # README と、同梱ライブラリのライセンス一式 (LGPL などは本文の添付が必要)
 $dist = Join-Path $root "dist\VirtualDiskMokuroku"
-Copy-Item (Join-Path $root "README.md"), (Join-Path $root "LICENSE"), (Join-Path $root "THIRD-PARTY-NOTICES.md") $dist
+Copy-Item (Join-Path $root "README.md"), (Join-Path $root "README.en.md"), (Join-Path $root "LICENSE"), (Join-Path $root "THIRD-PARTY-NOTICES.md") $dist
 Copy-Item (Join-Path $root "licenses") $dist -Recurse -Force
 Write-Host "完了: $(Join-Path $root 'dist\VirtualDiskMokuroku\VirtualDiskMokuroku.exe')"

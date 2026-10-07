@@ -70,10 +70,13 @@ from .thumbnail_view import (
     ThumbnailProvider,
     ThumbnailView,
 )
+from ..i18n import tr
 
 APP_NAME = "VirtualDiskMokuroku"
-_CATALOG_FILTER = f"カタログ (*{CATALOG_EXTENSION})"
-_OPEN_FILTER = "カタログ (" + " ".join(f"*{ext}" for ext in (CATALOG_EXTENSION, *LEGACY_CATALOG_EXTENSIONS)) + ")"
+# ファイルダイアログのフィルタなど。表示するときに tr() を通す (import 時には言語が決まっていないことがある)
+_CATALOG_FILTER = "カタログ (*{ext})"
+_OPEN_PATTERNS = " ".join(f"*{ext}" for ext in (CATALOG_EXTENSION, *LEGACY_CATALOG_EXTENSIONS))
+_OPEN_FILTER = "カタログ ({patterns})"
 _IMPORT_FILTER = "Virtual CD-ROM Case のカタログ (*.cas);;すべてのファイル (*)"
 _SOURCE_NAMES = {"everything": "Everything", "walk": "直接走査", "vcdcase": "Virtual CD-ROM Case からインポート"}
 _FILTER_DELAY_MS = 180
@@ -143,14 +146,14 @@ class MainWindow(QMainWindow):
 
         # --- 右: フィルタ + 一覧
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("フィルタ (入力するとすぐに絞り込み。空白区切りで AND 条件)")
+        self.filter_edit.setPlaceholderText(tr('フィルタ (入力するとすぐに絞り込み。空白区切りで AND 条件)'))
         self.filter_edit.setClearButtonEnabled(True)
         self.scope_combo = QComboBox()
-        self.scope_combo.addItem("このフォルダ", SCOPE_FOLDER)
-        self.scope_combo.addItem("下位フォルダを含む", SCOPE_SUBTREE)
-        self.scope_combo.addItem("全ドライブ", SCOPE_ALL)
-        self.context_check = QCheckBox("拡張コンテキストも検索")
-        self.context_check.setToolTip("メタ情報・テキスト内容・書庫内のファイル名も検索対象にします")
+        self.scope_combo.addItem(tr('このフォルダ'), SCOPE_FOLDER)
+        self.scope_combo.addItem(tr('下位フォルダを含む'), SCOPE_SUBTREE)
+        self.scope_combo.addItem(tr('全ドライブ'), SCOPE_ALL)
+        self.context_check = QCheckBox(tr('拡張コンテキストも検索'))
+        self.context_check.setToolTip(tr('メタ情報・テキスト内容・書庫内のファイル名も検索対象にします'))
         self._filter_timer = QTimer(self)
         self._filter_timer.setSingleShot(True)
         self._filter_timer.setInterval(_FILTER_DELAY_MS)
@@ -162,7 +165,7 @@ class MainWindow(QMainWindow):
         filter_row = QHBoxLayout()
         filter_row.setContentsMargins(0, 0, 0, 0)
         filter_row.addWidget(self.filter_edit, 1)
-        filter_row.addWidget(QLabel("範囲:"))
+        filter_row.addWidget(QLabel(tr('範囲:')))
         filter_row.addWidget(self.scope_combo)
         filter_row.addWidget(self.context_check)
 
@@ -210,7 +213,7 @@ class MainWindow(QMainWindow):
         self._thumb_config: tuple | None = None
         self._build_view_mode_menu()
         self.view_button = QToolButton()
-        self.view_button.setText("表示形式")
+        self.view_button.setText(tr('表示形式'))
         self.view_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.view_button.setMenu(self.view_mode_menu)
         filter_row.addWidget(self.view_button)
@@ -232,7 +235,7 @@ class MainWindow(QMainWindow):
         # --- プロパティ
         self.properties = PropertiesPanel()
         self.properties.redecodeRequested.connect(self._redecode_text)
-        self.properties_dock = QDockWidget("プロパティ", self)
+        self.properties_dock = QDockWidget(tr('プロパティ'), self)
         self.properties_dock.setObjectName("propertiesDock")
         self.properties_dock.setWidget(self.properties)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.properties_dock)
@@ -247,14 +250,14 @@ class MainWindow(QMainWindow):
     def _build_view_mode_menu(self) -> None:
         """表示形式 (詳細 / サムネイル 2 種) とサムネイル表示の設定メニュー。"""
         settings = self.app_settings
-        self.view_mode_menu = QMenu("表示形式(&L)", self)
+        self.view_mode_menu = QMenu(tr('表示形式(&L)'), self)
         self._mode_actions: dict[str, QAction] = {}
         group = QActionGroup(self)
         group.setExclusive(True)
         for mode, text in (
-            (VIEW_DETAILS, "詳細(&D)"),
-            (VIEW_TILES, "サムネイル (敷き詰め)(&T)"),
-            (VIEW_THUMB_LIST, "サムネイル (情報付き)(&I)"),
+            (VIEW_DETAILS, tr('詳細(&D)')),
+            (VIEW_TILES, tr('サムネイル (敷き詰め)(&T)')),
+            (VIEW_THUMB_LIST, tr('サムネイル (情報付き)(&I)')),
         ):
             item = self.view_mode_menu.addAction(text)
             item.setCheckable(True)
@@ -263,24 +266,24 @@ class MainWindow(QMainWindow):
             self._mode_actions[mode] = item
 
         self.view_mode_menu.addSeparator()
-        self.act_thumb_zoom = self.view_mode_menu.addAction("サムネイルを 2 倍に拡大(&2)")
+        self.act_thumb_zoom = self.view_mode_menu.addAction(tr('サムネイルを 2 倍に拡大(&2)'))
         self.act_thumb_zoom.setCheckable(True)
         self.act_thumb_zoom.setChecked(settings.thumb_zoom)
         self.act_thumb_zoom.toggled.connect(lambda _checked: self._on_thumb_option_changed())
-        self.caption_menu = self.view_mode_menu.addMenu("敷き詰め表示でサムネイルの下に出す項目(&C)")
+        self.caption_menu = self.view_mode_menu.addMenu(tr('敷き詰め表示でサムネイルの下に出す項目(&C)'))
         self._caption_actions: dict[str, QAction] = {}
         for key, label in CAPTION_LABELS.items():
-            item = self.caption_menu.addAction(label)
+            item = self.caption_menu.addAction(tr(label))
             item.setCheckable(True)
             item.setChecked(key in settings.thumb_captions)
             item.toggled.connect(lambda _checked: self._on_thumb_option_changed())
             self._caption_actions[key] = item
 
         self.view_mode_menu.addSeparator()
-        sort_menu = self.view_mode_menu.addMenu("並べ替え(&S)")
-        for column, text in ((COL_NAME, "名前"), (COL_SIZE, "サイズ"), (COL_MTIME, "更新日時"), (COL_TYPE, "種類")):
+        sort_menu = self.view_mode_menu.addMenu(tr('並べ替え(&S)'))
+        for column, text in ((COL_NAME, tr('名前')), (COL_SIZE, tr('サイズ')), (COL_MTIME, tr('更新日時')), (COL_TYPE, tr('種類'))):
             item = sort_menu.addAction(text)
-            item.setToolTip("同じ項目をもう一度選ぶと昇順/降順が入れ替わります")
+            item.setToolTip(tr('同じ項目をもう一度選ぶと昇順/降順が入れ替わります'))
             item.triggered.connect(lambda _checked=False, value=column: self.sort_by(value))
 
     def _build_actions(self) -> None:
@@ -295,45 +298,45 @@ class MainWindow(QMainWindow):
                 item.setIcon(style.standardIcon(icon))
             return item
 
-        self.act_new = action("新しいカタログ(&N)…", self.new_catalog, QKeySequence.StandardKey.New)
-        self.act_open = action("カタログを開く(&O)…", self.open_catalog_dialog, QKeySequence.StandardKey.Open)
-        self.act_close = action("カタログを閉じる(&C)", self.close_catalog)
-        self.act_exit = action("終了(&X)", self.close)
-        self.act_import_vcdcase = action("Virtual CD-ROM Case のカタログをインポート(&I)…", self.import_vcdcase)
-        self.act_export = action("表示中の一覧をエクスポート(&E)…", self.export_rows, "Ctrl+E")
-        self.act_export_decrypted = action("復号して別のカタログに書き出す(&D)…", self.export_decrypted)
-        self.act_copy_names = action("名前をコピー(&C)", self.copy_names, QKeySequence.StandardKey.Copy)
-        self.act_copy_paths = action("フルパスをコピー(&P)", self.copy_paths, "Ctrl+Shift+C")
-        self.act_select_all = action("すべて選択(&A)", self._select_all, QKeySequence.StandardKey.SelectAll)
-        self.act_open_location = action("場所を開く(&L)", self.open_location)
-        self.act_find = action("フィルタにフォーカス(&F)", self._focus_filter, QKeySequence.StandardKey.Find)
-        self.act_refresh = action("最新の情報に更新(&R)", self._run_query, "F5")
+        self.act_new = action(tr('新しいカタログ(&N)…'), self.new_catalog, QKeySequence.StandardKey.New)
+        self.act_open = action(tr('カタログを開く(&O)…'), self.open_catalog_dialog, QKeySequence.StandardKey.Open)
+        self.act_close = action(tr('カタログを閉じる(&C)'), self.close_catalog)
+        self.act_exit = action(tr('終了(&X)'), self.close)
+        self.act_import_vcdcase = action(tr('Virtual CD-ROM Case のカタログをインポート(&I)…'), self.import_vcdcase)
+        self.act_export = action(tr('表示中の一覧をエクスポート(&E)…'), self.export_rows, "Ctrl+E")
+        self.act_export_decrypted = action(tr('復号して別のカタログに書き出す(&D)…'), self.export_decrypted)
+        self.act_copy_names = action(tr('名前をコピー(&C)'), self.copy_names, QKeySequence.StandardKey.Copy)
+        self.act_copy_paths = action(tr('フルパスをコピー(&P)'), self.copy_paths, "Ctrl+Shift+C")
+        self.act_select_all = action(tr('すべて選択(&A)'), self._select_all, QKeySequence.StandardKey.SelectAll)
+        self.act_open_location = action(tr('場所を開く(&L)'), self.open_location)
+        self.act_find = action(tr('フィルタにフォーカス(&F)'), self._focus_filter, QKeySequence.StandardKey.Find)
+        self.act_refresh = action(tr('最新の情報に更新(&R)'), self._run_query, "F5")
 
-        self.act_back = action("戻る", self.go_back, "Alt+Left", QStyle.StandardPixmap.SP_ArrowBack)
-        self.act_forward = action("進む", self.go_forward, "Alt+Right", QStyle.StandardPixmap.SP_ArrowForward)
-        self.act_up = action("上へ", self.go_up, "Alt+Up", QStyle.StandardPixmap.SP_ArrowUp)
+        self.act_back = action(tr('戻る'), self.go_back, "Alt+Left", QStyle.StandardPixmap.SP_ArrowBack)
+        self.act_forward = action(tr('進む'), self.go_forward, "Alt+Right", QStyle.StandardPixmap.SP_ArrowForward)
+        self.act_up = action(tr('上へ'), self.go_up, "Alt+Up", QStyle.StandardPixmap.SP_ArrowUp)
 
-        self.act_scan = action("ドライブの追加 / 更新(&A)…", self.scan_drive, "Ctrl+D")
-        self.act_rescan = action("このドライブを更新 (再スキャン)(&U)…", self.rescan_current_drive)
-        self.act_rename = action("ドライブの表示名を変更(&R)…", self.rename_current_drive)
-        self.act_set_group = action("グループを変更(&G)…", self.set_current_drive_group)
-        self.act_drive_info = action("ドライブ情報(&I)…", self.show_drive_info)
-        self.act_remove = action("ドライブをカタログから削除(&D)…", self.remove_current_drive)
-        self.act_organize = action("ドライブの整理(&O)…", self.organize_drives)
-        self.act_organize.setToolTip("並び替え・グループ間の移動・一括削除・拡張コンテキストの削除・他のカタログへのコピー")
-        self.restore_menu = QMenu("バックアップから復元(&B)", self)
+        self.act_scan = action(tr('ドライブの追加 / 更新(&A)…'), self.scan_drive, "Ctrl+D")
+        self.act_rescan = action(tr('このドライブを更新 (再スキャン)(&U)…'), self.rescan_current_drive)
+        self.act_rename = action(tr('ドライブの表示名を変更(&R)…'), self.rename_current_drive)
+        self.act_set_group = action(tr('グループを変更(&G)…'), self.set_current_drive_group)
+        self.act_drive_info = action(tr('ドライブ情報(&I)…'), self.show_drive_info)
+        self.act_remove = action(tr('ドライブをカタログから削除(&D)…'), self.remove_current_drive)
+        self.act_organize = action(tr('ドライブの整理(&O)…'), self.organize_drives)
+        self.act_organize.setToolTip(tr('並び替え・グループ間の移動・一括削除・拡張コンテキストの削除・他のカタログへのコピー'))
+        self.restore_menu = QMenu(tr('バックアップから復元(&B)'), self)
         self.restore_menu.aboutToShow.connect(self._fill_restore_menu)
 
-        self.act_catalog_settings = action("カタログ設定(&C)…", self.edit_catalog_settings)
-        self.act_app_settings = action("アプリ設定(&A)…", self.edit_app_settings)
-        self.act_everything_help = action("Everything の導入方法(&E)", self.show_everything_help)
-        self.act_about = action("バージョン情報(&A)", self.show_about)
+        self.act_catalog_settings = action(tr('カタログ設定(&C)…'), self.edit_catalog_settings)
+        self.act_app_settings = action(tr('アプリ設定(&A)…'), self.edit_app_settings)
+        self.act_everything_help = action(tr('Everything の導入方法(&E)'), self.show_everything_help)
+        self.act_about = action(tr('バージョン情報(&A)'), self.show_about)
 
         menu = self.menuBar()
-        file_menu = menu.addMenu("ファイル(&F)")
+        file_menu = menu.addMenu(tr('ファイル(&F)'))
         file_menu.addAction(self.act_new)
         file_menu.addAction(self.act_open)
-        self.recent_menu = file_menu.addMenu("最近使ったカタログ(&R)")
+        self.recent_menu = file_menu.addMenu(tr('最近使ったカタログ(&R)'))
         self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
         file_menu.addAction(self.act_close)
         file_menu.addSeparator()
@@ -343,18 +346,18 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(self.act_exit)
 
-        edit_menu = menu.addMenu("編集(&E)")
+        edit_menu = menu.addMenu(tr('編集(&E)'))
         for item in (self.act_copy_names, self.act_copy_paths, self.act_select_all, self.act_find):
             edit_menu.addAction(item)
 
-        view_menu = menu.addMenu("表示(&V)")
+        view_menu = menu.addMenu(tr('表示(&V)'))
         for item in (self.act_back, self.act_forward, self.act_up, self.act_refresh):
             view_menu.addAction(item)
         view_menu.addSeparator()
         view_menu.addMenu(self.view_mode_menu)
         view_menu.addAction(self.properties_dock.toggleViewAction())
 
-        drive_menu = menu.addMenu("ドライブ(&D)")
+        drive_menu = menu.addMenu(tr('ドライブ(&D)'))
         drive_menu.addAction(self.act_scan)
         drive_menu.addAction(self.act_rescan)
         drive_menu.addSeparator()
@@ -366,21 +369,21 @@ class MainWindow(QMainWindow):
         drive_menu.addSeparator()
         drive_menu.addAction(self.act_organize)
 
-        settings_menu = menu.addMenu("設定(&S)")
+        settings_menu = menu.addMenu(tr('設定(&S)'))
         settings_menu.addAction(self.act_catalog_settings)
         settings_menu.addAction(self.act_app_settings)
 
-        help_menu = menu.addMenu("ヘルプ(&H)")
+        help_menu = menu.addMenu(tr('ヘルプ(&H)'))
         help_menu.addAction(self.act_everything_help)
         help_menu.addAction(self.act_about)
 
-        toolbar = QToolBar("ナビゲーション", self)
+        toolbar = QToolBar(tr('ナビゲーション'), self)
         toolbar.setObjectName("navigationToolbar")
         toolbar.setMovable(False)
         for item in (self.act_back, self.act_forward, self.act_up):
             toolbar.addAction(item)
         self.address = QLineEdit()
-        self.address.setPlaceholderText("カタログを開くか、新しいカタログを作成してください")
+        self.address.setPlaceholderText(tr('カタログを開くか、新しいカタログを作成してください'))
         self.address.returnPressed.connect(self._on_address_entered)
         toolbar.addWidget(self.address)
         self.addToolBar(toolbar)
@@ -443,7 +446,7 @@ class MainWindow(QMainWindow):
         self.act_export_decrypted.setEnabled(has_catalog and self.catalog.encrypted)  # type: ignore[union-attr]
         title = f"{APP_NAME} {__version__}"
         if self.catalog is not None and self.catalog.encrypted:
-            title = f"{self.catalog.path.name} [暗号化] - {title}"
+            title = tr('{name} [暗号化] - {title}').format(name=self.catalog.path.name, title=title)
         elif self.catalog is not None:
             title = f"{self.catalog.path.name} - {title}"
         self.setWindowTitle(title)
@@ -534,7 +537,7 @@ class MainWindow(QMainWindow):
 
     # ================================================================== カタログの開閉
     def new_catalog(self) -> None:
-        path, _filter = QFileDialog.getSaveFileName(self, "新しいカタログ", "", _CATALOG_FILTER)
+        path, _filter = QFileDialog.getSaveFileName(self, tr('新しいカタログ'), "", tr(_CATALOG_FILTER).format(ext=CATALOG_EXTENSION))
         if not path:
             return
         if not path.lower().endswith(CATALOG_EXTENSION):
@@ -542,16 +545,14 @@ class MainWindow(QMainWindow):
         password = None
         answer = QMessageBox.question(
             self, APP_NAME,
-            "このカタログを暗号化しますか?\n\n"
-            "暗号化すると、カタログの中身 (ファイル名・サムネイルなど) はパスワードが無いと読めなくなります。\n"
-            "パスワードを忘れると開けなくなり、復旧する方法はありません。暗号化は後から設定・解除できます。",
+            tr('このカタログを暗号化しますか?\n\n暗号化すると、カタログの中身 (ファイル名・サムネイルなど) はパスワードが無いと読めなくなります。\nパスワードを忘れると開けなくなり、復旧する方法はありません。暗号化は後から設定・解除できます。'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
             QMessageBox.StandardButton.No,
         )  # fmt: skip
         if answer == QMessageBox.StandardButton.Cancel:
             return
         if answer == QMessageBox.StandardButton.Yes:
-            password = ask_new_password(self, "暗号化のパスワード")
+            password = ask_new_password(self, tr('暗号化のパスワード'))
             if password is None:
                 return
         try:
@@ -560,20 +561,18 @@ class MainWindow(QMainWindow):
             with wait_cursor():
                 catalog = Catalog.create(path, password, encrypt=password is not None)
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, APP_NAME, f"カタログを作成できません。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('カタログを作成できません。\n\n{error}').format(error=error))
             return
         self._set_catalog(catalog)
         answer = QMessageBox.question(
             self, APP_NAME,
-            "カタログを作成しました。続けてドライブを追加しますか?\n\n"
-            "拡張コンテキスト (サムネイルやテキスト内容など) を登録する場合は、ドライブを追加する前に"
-            "「設定」→「カタログ設定」で有効にしてください。",
+            tr('カタログを作成しました。続けてドライブを追加しますか?\n\n拡張コンテキスト (サムネイルやテキスト内容など) を登録する場合は、ドライブを追加する前に「設定」→「カタログ設定」で有効にしてください。'),
         )  # fmt: skip
         if answer == QMessageBox.StandardButton.Yes:
             self.scan_drive()
 
     def open_catalog_dialog(self) -> None:
-        path, _filter = QFileDialog.getOpenFileName(self, "カタログを開く", "", _OPEN_FILTER)
+        path, _filter = QFileDialog.getOpenFileName(self, tr('カタログを開く'), "", tr(_OPEN_FILTER).format(patterns=_OPEN_PATTERNS))
         if path:
             self.open_catalog(path)
 
@@ -582,7 +581,7 @@ class MainWindow(QMainWindow):
             password = None
             if Catalog.is_password_protected(path):
                 while True:
-                    password = ask_password(self, "パスワード", f"{Path(path).name} のパスワード:")
+                    password = ask_password(self, tr('パスワード'), tr('{name} のパスワード:').format(name=Path(path).name))
                     if password is None:
                         return False
                     try:
@@ -593,7 +592,7 @@ class MainWindow(QMainWindow):
             else:
                 catalog = Catalog.open(path)
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, APP_NAME, f"カタログを開けません。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('カタログを開けません。\n\n{error}').format(error=error))
             return False
         self._set_catalog(catalog)
         return True
@@ -631,7 +630,7 @@ class MainWindow(QMainWindow):
             item = self.recent_menu.addAction(path)
             item.triggered.connect(lambda _checked=False, target=path: self.open_catalog(target))
         if not self.app_settings.recent_catalogs:
-            self.recent_menu.addAction("(なし)").setEnabled(False)
+            self.recent_menu.addAction(tr('(なし)')).setEnabled(False)
 
     # ================================================================== DB 接続
     def _ref(self, drive_id: str) -> DriveRef:
@@ -688,20 +687,20 @@ class MainWindow(QMainWindow):
     def _drive_text(self, drive: dict) -> str:
         text = drive["name"]
         if drive.get("total_bytes"):
-            text += f"   [空き {format_size(drive.get('free_bytes'))} / {format_size(drive.get('total_bytes'))}]"
+            text += tr('   [空き {free_bytes} / {total_bytes}]').format(free_bytes=format_size(drive.get('free_bytes')), total_bytes=format_size(drive.get('total_bytes')))
         return text
 
     def _drive_tooltip(self, drive: dict) -> str:
         device = " ".join(part for part in (drive.get("device_vendor"), drive.get("device_model")) if part)
         lines = [
-            f"ラベル: {drive.get('label') or '(なし)'}    シリアル: {drive.get('serial', '')}    形式: {drive.get('filesystem', '')}",
-            f"デバイス: {device or '-'}  [{drive.get('bus_type', '')}]",
-            f"スキャン時のパス: {drive.get('root', '')}",
-            f"ファイル {drive.get('file_count', 0):,} / フォルダ {drive.get('dir_count', 0):,} / 合計 {format_size(drive.get('total_size'))}",
-            f"スキャン日時: {format_iso(drive.get('scanned_at'))}",
+            tr('ラベル: {0}    シリアル: {serial}    形式: {filesystem}').format(drive.get('label') or tr('(なし)'), serial=drive.get('serial', ''), filesystem=drive.get('filesystem', '')),
+            tr('デバイス: {0}  [{bus_type}]').format(device or '-', bus_type=drive.get('bus_type', '')),
+            tr('スキャン時のパス: {root}').format(root=drive.get('root', '')),
+            tr('ファイル {file_count:,} / フォルダ {dir_count:,} / 合計 {total_size}').format(file_count=drive.get('file_count', 0), dir_count=drive.get('dir_count', 0), total_size=format_size(drive.get('total_size'))),
+            tr('スキャン日時: {scanned_at}').format(scanned_at=format_iso(drive.get('scanned_at'))),
         ]
         if drive.get("latest_mtime") is not None:
-            lines.append(f"最新の更新日時: {format_filetime(drive['latest_mtime'])} (ドライブ内で最も新しいファイル)")
+            lines.append(tr('最新の更新日時: {latest_mtime} (ドライブ内で最も新しいファイル)').format(latest_mtime=format_filetime(drive['latest_mtime'])))
         return "\n".join(lines)
 
     def _reload_tree(self) -> None:
@@ -753,7 +752,7 @@ class MainWindow(QMainWindow):
         try:
             folders = self._db(drive_id).children(item.data(ROLE_DIR), dirs_only=True)
         except (CatalogError, OSError) as error:
-            self.statusBar().showMessage(f"読み込みに失敗しました: {error}", 8000)
+            self.statusBar().showMessage(tr('読み込みに失敗しました: {error}').format(error=error), 8000)
             return
         children = []
         for folder in folders:
@@ -838,7 +837,7 @@ class MainWindow(QMainWindow):
         try:
             self._db(drive_id)
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, APP_NAME, f"ドライブのデータを開けません。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('ドライブのデータを開けません。\n\n{error}').format(error=error))
             return
         location = (drive_id, dir_id)
         if add_history and location != self._location:
@@ -889,7 +888,7 @@ class MainWindow(QMainWindow):
                 else:
                     self.navigate(drive_id, entry.parent_id, select_entry=entry.id)
                 return
-        self.statusBar().showMessage(f"カタログ内に見つかりません: {text}", 6000)
+        self.statusBar().showMessage(tr('カタログ内に見つかりません: {text}').format(text=text), 6000)
         self._update_address()
 
     def _go_history(self, index: int) -> None:
@@ -935,7 +934,7 @@ class MainWindow(QMainWindow):
             else:
                 return None
         except (CatalogError, OSError) as error:
-            self.statusBar().showMessage(f"ドライブのデータを開けません: {error}", 8000)
+            self.statusBar().showMessage(tr('ドライブのデータを開けません: {error}').format(error=error), 8000)
             return None
         include_context = self.context_check.isEnabled() and self.context_check.isChecked()
         return QuerySpec(scope, terms, drives, dir_id, limit, include_context)
@@ -951,7 +950,7 @@ class MainWindow(QMainWindow):
             self._update_status()
             return
         if spec.terms:
-            self.items_label.setText("検索中…")
+            self.items_label.setText(tr('検索中…'))
         self.queryRequested.emit(self._generation, spec)
 
     def _on_query_finished(self, generation: int, rows: list[Row], truncated: bool, error: str) -> None:
@@ -975,7 +974,7 @@ class MainWindow(QMainWindow):
                 )
                 self._view().scrollTo(index, QAbstractItemView.ScrollHint.PositionAtCenter)
         if error:
-            self.statusBar().showMessage(f"検索に失敗しました: {error}", 8000)
+            self.statusBar().showMessage(tr('検索に失敗しました: {error}').format(error=error), 8000)
         self._on_selection_changed()
 
     # ================================================================== 選択・ステータス
@@ -1004,35 +1003,34 @@ class MainWindow(QMainWindow):
     def _update_status(self) -> None:
         rows = self.table_model.rows
         if self.catalog is None:
-            self.items_label.setText("カタログが開かれていません")
+            self.items_label.setText(tr('カタログが開かれていません'))
             self.drive_label.setText("")
             return
         if not self.catalog.drives:
-            self.items_label.setText("ドライブが登録されていません。「ドライブ」→「ドライブの追加 / 更新」でスキャンしてください。")
+            self.items_label.setText(tr('ドライブが登録されていません。「ドライブ」→「ドライブの追加 / 更新」でスキャンしてください。'))
             self.drive_label.setText("")
             return
         folders = sum(1 for row in rows if row.entry.is_dir)
         files = len(rows) - folders
-        text = f"{len(rows):,} 個の項目 (フォルダ {folders:,} / ファイル {files:,})"
+        text = tr('{rows_count:,} 個の項目 (フォルダ {folders:,} / ファイル {files:,})').format(rows_count=len(rows), folders=folders, files=files)
         if self._spec is not None and self._spec.effective_scope == SCOPE_FOLDER and self._location is not None:
             folder = self._db(self._location[0]).get(self._location[1]) if self._location[1] != ROOT_ID else None
             total = folder.size if folder else self.catalog.drive(self._location[0]).get("total_size")
-            text += f"   フォルダ合計 {format_size(total)}"
+            text += tr('   フォルダ合計 {total}').format(total=format_size(total))
         else:
-            text += f"   ファイル合計 {format_size(sum(row.entry.size or 0 for row in rows if not row.entry.is_dir))}"
+            text += tr('   ファイル合計 {sum}').format(sum=format_size(sum(row.entry.size or 0 for row in rows if not row.entry.is_dir)))
         if self._truncated:
-            text += f"   ※ 上限の {len(rows):,} 件まで表示 (エクスポートは全件)"
+            text += tr('   ※ 上限の {rows_count:,} 件まで表示 (エクスポートは全件)').format(rows_count=len(rows))
         selected = self._selected_rows()
         if selected:
             size = sum((row.entry.size or 0) for row in selected)
-            text += f"   |   {len(selected):,} 個選択  {format_size(size)} ({format_bytes(size)} バイト)"
+            text += tr('   |   {selected_count:,} 個選択  {size} ({size2} バイト)').format(selected_count=len(selected), size=format_size(size), size2=format_bytes(size))
         self.items_label.setText(text)
 
         if self._location is not None:
             drive = self.catalog.drive(self._location[0])
             self.drive_label.setText(
-                f"{drive['name']}:  空き {format_size(drive.get('free_bytes'))} / {format_size(drive.get('total_bytes'))}"
-                f"   スキャン {format_iso(drive.get('scanned_at'))}"
+                tr('{name}:  空き {free_bytes} / {total_bytes}   スキャン {scanned_at}').format(name=drive['name'], free_bytes=format_size(drive.get('free_bytes')), total_bytes=format_size(drive.get('total_bytes')), scanned_at=format_iso(drive.get('scanned_at')))
             )
         else:
             self.drive_label.setText("")
@@ -1100,7 +1098,7 @@ class MainWindow(QMainWindow):
         folder = self._connected_folder(drive_id, dir_id)
         if folder is None:
             return
-        item = menu.addAction("このフォルダをエクスプローラで開く(&X)")
+        item = menu.addAction(tr('このフォルダをエクスプローラで開く(&X)'))
         item.setToolTip(folder)
         item.triggered.connect(lambda _checked=False, target=folder: self.open_in_explorer(target))
 
@@ -1108,15 +1106,13 @@ class MainWindow(QMainWindow):
         if not os.path.isdir(folder):
             QMessageBox.warning(
                 self, APP_NAME,
-                f"フォルダが見つかりません。\n\n{folder}\n\n"
-                "カタログ作成後に移動・削除されたか、名前が変更された可能性があります。"
-                "ドライブを更新 (再スキャン) するとカタログが現在の内容になります。",
+                tr('フォルダが見つかりません。\n\n{folder}\n\nカタログ作成後に移動・削除されたか、名前が変更された可能性があります。ドライブを更新 (再スキャン) するとカタログが現在の内容になります。').format(folder=folder),
             )  # fmt: skip
             return
         try:
             os.startfile(folder)
         except OSError as error:
-            QMessageBox.warning(self, APP_NAME, f"エクスプローラで開けません。\n\n{folder}\n\n{error}")
+            QMessageBox.warning(self, APP_NAME, tr('エクスプローラで開けません。\n\n{folder}\n\n{error}').format(folder=folder, error=error))
 
     def copy_names(self) -> None:
         view = self._view()
@@ -1128,19 +1124,19 @@ class MainWindow(QMainWindow):
         rows = self._selected_rows()
         if rows:
             QGuiApplication.clipboard().setText("\r\n".join(row.entry.name for row in rows))
-            self.statusBar().showMessage(f"{len(rows):,} 件の名前をコピーしました", 3000)
+            self.statusBar().showMessage(tr('{rows_count:,} 件の名前をコピーしました').format(rows_count=len(rows)), 3000)
 
     def copy_paths(self) -> None:
         rows = self._selected_rows()
         if rows:
             QGuiApplication.clipboard().setText("\r\n".join(row.full_path for row in rows))
-            self.statusBar().showMessage(f"{len(rows):,} 件のフルパスをコピーしました", 3000)
+            self.statusBar().showMessage(tr('{rows_count:,} 件のフルパスをコピーしました').format(rows_count=len(rows)), 3000)
 
     def export_rows(self) -> None:
         if self._spec is None:
             return
         path, chosen = QFileDialog.getSaveFileName(
-            self, "一覧をエクスポート", "", "テキスト (*.txt);;CSV (*.csv)"
+            self, tr('一覧をエクスポート'), "", tr('テキスト (*.txt);;CSV (*.csv)')
         )
         if not path:
             return
@@ -1160,9 +1156,9 @@ class MainWindow(QMainWindow):
                 else:
                     count = export.export_rows(path, self.table_model.rows, fmt)
         except OSError as error:
-            QMessageBox.critical(self, APP_NAME, f"エクスポートに失敗しました。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('エクスポートに失敗しました。\n\n{error}').format(error=error))
             return
-        self.statusBar().showMessage(f"{count:,} 件を {path} に書き出しました", 8000)
+        self.statusBar().showMessage(tr('{count:,} 件を {path} に書き出しました').format(count=count, path=path), 8000)
 
     # ================================================================== 拡張コンテキスト
     def _redecode_text(self, drive_id: str, entry_id: int, encoding: str) -> None:
@@ -1195,10 +1191,10 @@ class MainWindow(QMainWindow):
                 self._close_databases()
                 self.catalog.replace_context_db(drive_id, updated)
         except (LookupError, UnicodeError, ValueError) as error:
-            QMessageBox.warning(self, APP_NAME, f"文字コード「{encoding}」で読み直せません。\n\n{error}")
+            QMessageBox.warning(self, APP_NAME, tr('文字コード「{encoding}」で読み直せません。\n\n{error}').format(encoding=encoding, error=error))
             return
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, APP_NAME, f"カタログを更新できません。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('カタログを更新できません。\n\n{error}').format(error=error))
             return
         finally:
             if work_dir is not None:
@@ -1217,7 +1213,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         item = self.tree_model.itemFromIndex(index) if index.isValid() else None
         if item is not None and item.data(ROLE_GROUP) is not None:
-            rename = menu.addAction("グループ名を変更(&R)…")
+            rename = menu.addAction(tr('グループ名を変更(&R)…'))
             rename.triggered.connect(lambda _checked=False, name=item.data(ROLE_GROUP): self.rename_group(name))
             menu.addSeparator()
         elif index.isValid():
@@ -1251,7 +1247,7 @@ class MainWindow(QMainWindow):
         if self.catalog is None:
             return
         if not path:
-            path, _filter = QFileDialog.getOpenFileName(self, "Virtual CD-ROM Case のカタログをインポート", "", _IMPORT_FILTER)
+            path, _filter = QFileDialog.getOpenFileName(self, tr('Virtual CD-ROM Case のカタログをインポート'), "", tr(_IMPORT_FILTER))
             if not path:
                 return
         known = {drive["id"] for drive in self.catalog.drives}
@@ -1291,7 +1287,7 @@ class MainWindow(QMainWindow):
         drive = self._current_drive()
         if drive is None or self.catalog is None:
             return
-        name, accepted = QInputDialog.getText(self, "ドライブの表示名", "表示名:", text=drive["name"])
+        name, accepted = QInputDialog.getText(self, tr('ドライブの表示名'), tr('表示名:'), text=drive["name"])
         name = name.strip()
         if not accepted or not name or name == drive["name"]:
             return
@@ -1299,7 +1295,7 @@ class MainWindow(QMainWindow):
         try:
             self.catalog.save()
         except OSError as error:
-            QMessageBox.critical(self, APP_NAME, f"カタログを保存できません。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('カタログを保存できません。\n\n{error}').format(error=error))
             return
         self._after_catalog_changed(drive["id"])
 
@@ -1312,8 +1308,8 @@ class MainWindow(QMainWindow):
         current = drive.get("group", "")
         choices = ["", *catalog.group_names()]
         group, accepted = QInputDialog.getItem(
-            self, "グループを変更",
-            f"「{drive['name']}」を入れるグループ:\n(一覧から選ぶか、新しい名前を入力します。空欄にするとグループから外します)",
+            self, tr('グループを変更'),
+            tr('「{name}」を入れるグループ:\n(一覧から選ぶか、新しい名前を入力します。空欄にするとグループから外します)').format(name=drive['name']),
             choices, choices.index(current), True,
         )  # fmt: skip
         if accepted and group.strip() != current:
@@ -1323,12 +1319,12 @@ class MainWindow(QMainWindow):
         catalog = self.catalog
         if catalog is None:
             return
-        new_name, accepted = QInputDialog.getText(self, "グループ名を変更", "グループ名:", text=name)
+        new_name, accepted = QInputDialog.getText(self, tr('グループ名を変更'), tr('グループ名:'), text=name)
         new_name = new_name.strip()
         if not accepted or not new_name or new_name == name:
             return
         if new_name in catalog.group_names():
-            answer = QMessageBox.question(self, APP_NAME, f"グループ「{new_name}」は既にあります。1 つにまとめますか?")
+            answer = QMessageBox.question(self, APP_NAME, tr('グループ「{new_name}」は既にあります。1 つにまとめますか?').format(new_name=new_name))
             if answer != QMessageBox.StandardButton.Yes:
                 return
         if name in self._collapsed_groups:
@@ -1339,7 +1335,7 @@ class MainWindow(QMainWindow):
         try:
             change()
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, APP_NAME, f"カタログを保存できません。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('カタログを保存できません。\n\n{error}').format(error=error))
             return
         self._after_catalog_changed(select_drive_id)
 
@@ -1349,7 +1345,7 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self, APP_NAME,
-            f"「{drive['name']}」をカタログから削除しますか?\nバックアップ世代も含めて削除され、元に戻せません。",
+            tr('「{name}」をカタログから削除しますか?\nバックアップ世代も含めて削除され、元に戻せません。').format(name=drive['name']),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )  # fmt: skip
         if answer != QMessageBox.StandardButton.Yes:
@@ -1359,7 +1355,7 @@ class MainWindow(QMainWindow):
             with wait_cursor():
                 self.catalog.remove_drive(drive["id"])
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, APP_NAME, f"削除に失敗しました。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('削除に失敗しました。\n\n{error}').format(error=error))
         self._after_catalog_changed()
 
     def organize_drives(self) -> None:
@@ -1377,13 +1373,12 @@ class MainWindow(QMainWindow):
         backups = drive.get("backups", []) if drive else []
         for backup in backups:
             text = (
-                f"{format_iso(backup.get('scanned_at'))}  ファイル {backup.get('file_count') or 0:,}"
-                f" / 合計 {format_size(backup.get('total_size'))}"
+                tr('{scanned_at}  ファイル {0:,} / 合計 {total_size}').format(backup.get('file_count') or 0, scanned_at=format_iso(backup.get('scanned_at')), total_size=format_size(backup.get('total_size')))
             )
             item = self.restore_menu.addAction(text)
             item.triggered.connect(lambda _checked=False, stamp=backup["stamp"]: self.restore_backup(stamp))
         if not backups:
-            self.restore_menu.addAction("(バックアップはありません)").setEnabled(False)
+            self.restore_menu.addAction(tr('(バックアップはありません)')).setEnabled(False)
 
     def restore_backup(self, stamp: str) -> None:
         drive = self._current_drive()
@@ -1391,7 +1386,7 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.question(
             self, APP_NAME,
-            f"「{drive['name']}」をバックアップの状態に戻しますか?\n現在の内容はバックアップ世代として残ります。",
+            tr('「{name}」をバックアップの状態に戻しますか?\n現在の内容はバックアップ世代として残ります。').format(name=drive['name']),
         )  # fmt: skip
         if answer != QMessageBox.StandardButton.Yes:
             return
@@ -1400,7 +1395,7 @@ class MainWindow(QMainWindow):
             with wait_cursor():
                 self.catalog.restore_backup(drive["id"], stamp)
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, APP_NAME, f"復元に失敗しました。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('復元に失敗しました。\n\n{error}').format(error=error))
         self._after_catalog_changed(drive["id"])
 
     def show_drive_info(self) -> None:
@@ -1409,19 +1404,19 @@ class MainWindow(QMainWindow):
             return
         backups = drive.get("backups", [])
         lines = [self._drive_tooltip(drive)]
-        lines.append(f"容量: {format_size(drive.get('total_bytes'))}    空き: {format_size(drive.get('free_bytes'))} (スキャン時点)")
-        lines.append(f"取得元: {_SOURCE_NAMES.get(drive.get('source', ''), '直接走査')}")
+        lines.append(tr('容量: {total_bytes}    空き: {free_bytes} (スキャン時点)').format(total_bytes=format_size(drive.get('total_bytes')), free_bytes=format_size(drive.get('free_bytes'))))
+        lines.append(tr('取得元: {source}').format(source=tr(_SOURCE_NAMES.get(drive.get('source') or 'walk', _SOURCE_NAMES['walk']))))
         if drive.get("group"):
             group_comment = f" ({drive['group_comment']})" if drive.get("group_comment") else ""
-            lines.append(f"グループ: {drive['group']}{group_comment}")
+            lines.append(tr('グループ: {group}{group_comment}').format(group=drive['group'], group_comment=group_comment))
         if drive.get("comment"):
-            lines.append(f"コメント: {drive['comment']}")
-        context = "なし"
+            lines.append(tr('コメント: {comment}').format(comment=drive['comment']))
+        context = tr('なし')
         if drive.get("has_context"):
-            context = "あり (取得を途中でキャンセル。次回の更新で続きを取得)" if drive.get("context_partial") else "あり"
-        lines.append(f"拡張コンテキスト: {context}")
-        lines.append(f"バックアップ: {len(backups)} 世代")
-        lines += [f"   {format_iso(backup.get('scanned_at'))}  ファイル {backup.get('file_count') or 0:,}" for backup in backups]
+            context = tr('あり (取得を途中でキャンセル。次回の更新で続きを取得)') if drive.get("context_partial") else tr('あり')
+        lines.append(tr('拡張コンテキスト: {context}').format(context=context))
+        lines.append(tr('バックアップ: {backups_count} 世代').format(backups_count=len(backups)))
+        lines += [tr('   {scanned_at}  ファイル {0:,}').format(backup.get('file_count') or 0, scanned_at=format_iso(backup.get('scanned_at'))) for backup in backups]
         QMessageBox.information(self, drive["name"], "\n".join(lines))
 
     # ================================================================== 設定・ヘルプ
@@ -1442,12 +1437,12 @@ class MainWindow(QMainWindow):
             return
         answer = QMessageBox.warning(
             self, APP_NAME,
-            "暗号化していないカタログとして書き出します。書き出したファイルの中身は誰でも読めます。続けますか?",
+            tr('暗号化していないカタログとして書き出します。書き出したファイルの中身は誰でも読めます。続けますか?'),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
         )  # fmt: skip
         if answer != QMessageBox.StandardButton.Yes:
             return
-        path, _filter = QFileDialog.getSaveFileName(self, "復号して書き出す", "", _CATALOG_FILTER)
+        path, _filter = QFileDialog.getSaveFileName(self, tr('復号して書き出す'), "", tr(_CATALOG_FILTER).format(ext=CATALOG_EXTENSION))
         if not path:
             return
         if not path.lower().endswith(CATALOG_EXTENSION):
@@ -1456,9 +1451,9 @@ class MainWindow(QMainWindow):
             with wait_cursor():
                 self.catalog.export_decrypted(path)
         except (CatalogError, OSError) as error:
-            QMessageBox.critical(self, APP_NAME, f"書き出しに失敗しました。\n\n{error}")
+            QMessageBox.critical(self, APP_NAME, tr('書き出しに失敗しました。\n\n{error}').format(error=error))
             return
-        self.statusBar().showMessage(f"{path} に書き出しました", 8000)
+        self.statusBar().showMessage(tr('{path} に書き出しました').format(path=path), 8000)
 
     def edit_app_settings(self) -> None:
         if AppSettingsDialog(self.app_settings, self).exec():
@@ -1468,18 +1463,12 @@ class MainWindow(QMainWindow):
 
     def show_everything_help(self) -> None:
         QMessageBox.information(
-            self, "Everything の導入方法",
-            "このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n"
-            "1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n"
-            "2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。\n"
-            "3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n"
-            "4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\n"
-            "Everything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、"
-            "自動的に直接走査でファイルリストを取得します。",
+            self, tr('Everything の導入方法'),
+            tr('このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。'),
         )  # fmt: skip
 
     def show_about(self) -> None:
         QMessageBox.about(
             self, APP_NAME,
-            f"{APP_NAME} {__version__}\n\nEverything (es.exe) 連携のオフライン ファイルリスト カタログツール",
+            tr('{APP_NAME} {__version__}\n\nEverything (es.exe) 連携のオフライン ファイルリスト カタログツール').format(APP_NAME=APP_NAME, __version__=__version__),
         )  # fmt: skip

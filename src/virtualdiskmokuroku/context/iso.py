@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from .base import EntryWriter, Extractor, datetime_to_filetime
+from ..i18n import tr
 
 
 def _record_size(record) -> int | None:
@@ -104,6 +105,6 @@ class IsoExtractor(Extractor):
                     break
             writer.add_meta("inner_count", count)
             if truncated:
-                writer.add_meta("inner_truncated", f"先頭 {count} 件のみ")
+                writer.add_meta("inner_truncated", tr('先頭 {count} 件のみ').format(count=count))
         finally:
             iso.close()

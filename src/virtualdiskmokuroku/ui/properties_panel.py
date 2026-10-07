@@ -24,6 +24,7 @@ from ..core.formatting import format_attributes, format_bytes, format_filetime, 
 from ..core.search import Row
 from .models import type_text
 from .style import apply_selection_style
+from ..i18n import tr
 
 _ENCODINGS = [
     "utf-8", "cp932", "euc_jp", "iso2022_jp", "utf-16", "utf-16-le", "utf-16-be",
@@ -81,8 +82,8 @@ class PropertiesPanel(QScrollArea):
         form = QFormLayout()
         self._fields: dict[str, QLabel] = {}
         for key, caption in (
-            ("location", "場所"), ("type", "種類"), ("size", "サイズ"), ("contents", "内容"),
-            ("mtime", "更新日時"), ("ctime", "作成日時"), ("attrs", "属性"), ("drive", "ドライブ"),
+            ("location", tr('場所')), ("type", tr('種類')), ("size", tr('サイズ')), ("contents", tr('内容')),
+            ("mtime", tr('更新日時')), ("ctime", tr('作成日時')), ("attrs", tr('属性')), ("drive", tr('ドライブ')),
         ):  # fmt: skip
             label = _selectable()
             self._fields[key] = label
@@ -93,23 +94,23 @@ class PropertiesPanel(QScrollArea):
         self._thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self._thumb)
 
-        self._meta_caption = QLabel("メタ情報")
+        self._meta_caption = QLabel(tr('メタ情報'))
         layout.addWidget(self._meta_caption)
-        self._meta = _table(["項目", "値"])
+        self._meta = _table([tr('項目'), tr('値')])
         layout.addWidget(self._meta)
 
         self._text_box = QWidget()
         text_layout = QVBoxLayout(self._text_box)
         text_layout.setContentsMargins(0, 0, 0, 0)
         text_row = QHBoxLayout()
-        text_row.addWidget(QLabel("テキスト内容  文字コード:"))
+        text_row.addWidget(QLabel(tr('テキスト内容  文字コード:')))
         self._encoding = QComboBox()
         self._encoding.setEditable(True)
         self._encoding.addItems(_ENCODINGS)
         text_row.addWidget(self._encoding, 1)
         text_layout.addLayout(text_row)
-        self._redecode = QPushButton("この文字コードで再取込")
-        self._redecode.setToolTip("文字化けしている場合、保存済みのデータを指定した文字コードで読み直します")
+        self._redecode = QPushButton(tr('この文字コードで再取込'))
+        self._redecode.setToolTip(tr('文字化けしている場合、保存済みのデータを指定した文字コードで読み直します'))
         self._redecode.clicked.connect(self._emit_redecode)
         text_layout.addWidget(self._redecode, 0, Qt.AlignmentFlag.AlignRight)
         self._text = QPlainTextEdit()
@@ -120,7 +121,7 @@ class PropertiesPanel(QScrollArea):
 
         self._inner_caption = QLabel()
         layout.addWidget(self._inner_caption)
-        self._inner = _table(["パス", "サイズ", "更新日時"])
+        self._inner = _table([tr('パス'), tr('サイズ'), tr('更新日時')])
         self._inner.setMinimumHeight(200)
         layout.addWidget(self._inner)
 
@@ -137,7 +138,7 @@ class PropertiesPanel(QScrollArea):
         for widget in (self._thumb, self._meta_caption, self._meta, self._text_box, self._inner_caption, self._inner):
             widget.setVisible(False)
         if row is None:
-            self._title.setText("(選択なし)")
+            self._title.setText(tr('(選択なし)'))
             for label in self._fields.values():
                 label.setText("")
             return
@@ -146,9 +147,9 @@ class PropertiesPanel(QScrollArea):
         self._title.setText(entry.name)
         self._fields["location"].setText(row.location)
         self._fields["type"].setText(type_text(row))
-        size = "" if entry.size is None else f"{format_size(entry.size)} ({format_bytes(entry.size)} バイト)"
+        size = "" if entry.size is None else tr('{size} ({size2} バイト)').format(size=format_size(entry.size), size2=format_bytes(entry.size))
         self._fields["size"].setText(size)
-        contents = f"ファイル {entry.file_count or 0:,} / フォルダ {entry.dir_count or 0:,}" if entry.is_dir else ""
+        contents = tr('ファイル {0:,} / フォルダ {1:,}').format(entry.file_count or 0, entry.dir_count or 0) if entry.is_dir else ""
         self._fields["contents"].setText(contents)
         self._fields["mtime"].setText(format_filetime(entry.mtime))
         self._fields["ctime"].setText(format_filetime(entry.ctime))
@@ -172,10 +173,10 @@ class PropertiesPanel(QScrollArea):
         if meta:
             self._meta.setRowCount(len(meta))
             for index, (kind, key, value) in enumerate(meta):
-                caption = KEY_LABELS.get(key, key)
+                caption = tr(KEY_LABELS.get(key, key))
                 item = QTableWidgetItem(caption)
                 extractor = EXTRACTORS.get(kind)
-                item.setToolTip(extractor.label if extractor else KIND_LABELS.get(kind, kind))
+                item.setToolTip(tr(extractor.label) if extractor else tr(KIND_LABELS.get(kind, kind)))
                 self._meta.setItem(index, 0, item)
                 self._meta.setItem(index, 1, QTableWidgetItem(value))
             self._meta.resizeColumnToContents(0)
@@ -201,9 +202,9 @@ class PropertiesPanel(QScrollArea):
                 self._inner.setItem(index, 1, size_item)
                 self._inner.setItem(index, 2, QTableWidgetItem(format_filetime(item.mtime)))
             self._inner.resizeColumnToContents(0)
-            caption = f"書庫 / イメージ内のファイルリスト ({len(inner):,} 件)"
+            caption = tr('書庫 / イメージ内のファイルリスト ({inner_count:,} 件)').format(inner_count=len(inner))
             if len(inner) > len(shown):
-                caption += f" — 先頭 {len(shown):,} 件を表示"
+                caption += tr(' — 先頭 {shown_count:,} 件を表示').format(shown_count=len(shown))
             self._inner_caption.setText(caption)
             self._inner_caption.setVisible(True)
             self._inner.setVisible(True)

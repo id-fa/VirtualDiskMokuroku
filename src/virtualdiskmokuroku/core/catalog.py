@@ -46,6 +46,7 @@ from .ignore import DEFAULT_IGNORE
 from .scanner import ScanResult
 from .volume import VolumeInfo, list_volumes
 from .workdb import DEFAULT_MEMORY_LIMIT, open_shared_memory_db, remove_quietly
+from ..i18n import tr
 
 CATALOG_EXTENSION = ".vdmoku"
 LEGACY_CATALOG_EXTENSIONS = (".pmcat",)  # 旧名 PyMediaCatalogue 時代の拡張子(開くことはできる)
@@ -157,7 +158,7 @@ def _copy_member_raw(zin: zipfile.ZipFile, zout: zipfile.ZipFile, info: zipfile.
     source.seek(info.header_offset)
     local_header = source.read(30)
     if len(local_header) != 30 or local_header[:4] != b"PK\x03\x04":
-        raise CatalogError(f"カタログ内のエントリが壊れています: {info.filename}")
+        raise CatalogError(tr('カタログ内のエントリが壊れています: {filename}').format(filename=info.filename))
     name_len, extra_len = struct.unpack("<HH", local_header[26:30])
     source.seek(info.header_offset + 30 + name_len + extra_len)
 
@@ -172,7 +173,7 @@ def _copy_member_raw(zin: zipfile.ZipFile, zout: zipfile.ZipFile, info: zipfile.
     while remaining > 0:
         chunk = source.read(min(_COPY_CHUNK, remaining))
         if not chunk:
-            raise CatalogError(f"カタログ内のエントリが途中で切れています: {info.filename}")
+            raise CatalogError(tr('カタログ内のエントリが途中で切れています: {filename}').format(filename=info.filename))
         zout.fp.write(chunk)
         remaining -= len(chunk)
     zout.filelist.append(new_info)
@@ -260,7 +261,7 @@ class Catalog:
             manifest["settings"]["password"] = make_password_record(password)
         catalog = cls(path, manifest, cache_root, data_key=data_key, key_record=key_record)
         if catalog.path.exists():
-            raise CatalogError(f"既にファイルが存在します: {catalog.path}")
+            raise CatalogError(tr('既にファイルが存在します: {path}').format(path=catalog.path))
         catalog._rewrite()
         return catalog
 
@@ -271,11 +272,11 @@ class Catalog:
             with zipfile.ZipFile(path) as archive:
                 manifest = json.loads(archive.read(MANIFEST_NAME).decode("utf-8"))
         except (OSError, KeyError, ValueError, zipfile.BadZipFile) as error:
-            raise CatalogError(f"カタログを読み込めません: {path} ({error})") from error
+            raise CatalogError(tr('カタログを読み込めません: {path} ({error})').format(path=path, error=error)) from error
         if manifest.get("format") not in (FORMAT_NAME, *_LEGACY_FORMAT_NAMES):
-            raise CatalogError(f"VirtualDiskMokuroku のカタログではありません: {path}")
+            raise CatalogError(tr('VirtualDiskMokuroku のカタログではありません: {path}').format(path=path))
         if manifest.get("format_version", 0) > ENCRYPTED_FORMAT_VERSION:
-            raise CatalogError("このカタログは新しいバージョンのアプリで作成されています")
+            raise CatalogError(tr('このカタログは新しいバージョンのアプリで作成されています'))
         return manifest
 
     @classmethod
@@ -295,7 +296,7 @@ class Catalog:
         key_record = manifest.get("encryption")
         if key_record:
             if password is None:
-                raise PasswordError("このカタログは暗号化されています。パスワードが必要です")
+                raise PasswordError(tr('このカタログは暗号化されています。パスワードが必要です'))
             data_key = crypto.unlock_key(key_record, password)
             catalog_id = manifest.get("catalog_id", "")
             try:
@@ -303,9 +304,9 @@ class Catalog:
                     blob = archive.read(MANIFEST_ENC)
                 manifest = json.loads(crypto.decrypt_bytes(data_key, f"{catalog_id}/manifest", blob).decode("utf-8"))
             except (OSError, KeyError, ValueError, zipfile.BadZipFile) as error:
-                raise CatalogError(f"カタログを読み込めません: {path} ({error})") from error
+                raise CatalogError(tr('カタログを読み込めません: {path} ({error})').format(path=path, error=error)) from error
             if manifest.get("catalog_id") != catalog_id:
-                raise CatalogError("カタログの内容が一致しません(改ざんされている可能性があります)")
+                raise CatalogError(tr('カタログの内容が一致しません(改ざんされている可能性があります)'))
 
         settings = default_settings()
         settings.update(manifest.get("settings", {}))
@@ -314,9 +315,9 @@ class Catalog:
         record = settings.get("password")
         if record and not key_record:
             if password is None:
-                raise PasswordError("このカタログはパスワードで保護されています")
+                raise PasswordError(tr('このカタログはパスワードで保護されています'))
             if not verify_password(record, password):
-                raise PasswordError("パスワードが違います")
+                raise PasswordError(tr('パスワードが違います'))
         return cls(path, manifest, cache_root, data_key=data_key, key_record=key_record)
 
     # ------------------------------------------------------------------ 基本情報
@@ -340,7 +341,7 @@ class Catalog:
         for drive in self.drives:
             if drive["id"] == drive_id:
                 return drive
-        raise CatalogError(f"ドライブが見つかりません: {drive_id}")
+        raise CatalogError(tr('ドライブが見つかりません: {drive_id}').format(drive_id=drive_id))
 
     def find_matching_drives(self, volume: VolumeInfo, root: str) -> list[dict]:
         """同じメディアとみなせる登録済みドライブ(ドライブレターには依存しない)。"""
@@ -396,7 +397,7 @@ class Catalog:
         """
         if self.encrypted:
             if not password:
-                raise CatalogError("暗号化カタログのパスワードは空にできません。保護をやめるには暗号化を解除してください")
+                raise CatalogError(tr('暗号化カタログのパスワードは空にできません。保護をやめるには暗号化を解除してください'))
             assert self._data_key is not None
             self._key_record = crypto.wrap_key(self._data_key, password, kdf or self._current_kdf())
         else:
@@ -412,7 +413,7 @@ class Catalog:
     def encrypt(self, password: str, kdf: dict | None = None) -> None:
         """通常のカタログを暗号化カタログに変換する。平文のキャッシュも削除する。"""
         if self.encrypted:
-            raise CatalogError("このカタログは既に暗号化されています")
+            raise CatalogError(tr('このカタログは既に暗号化されています'))
         key_record, data_key = crypto.create_key(password, kdf)
         previous = self.settings.get("password")
         self.settings["password"] = None  # 照合用の記録は不要になる
@@ -429,7 +430,7 @@ class Catalog:
     def decrypt(self) -> None:
         """暗号化カタログを通常の(暗号化しない)カタログに戻す。"""
         if not self.encrypted:
-            raise CatalogError("このカタログは暗号化されていません")
+            raise CatalogError(tr('このカタログは暗号化されていません'))
         with self._lock:
             self._write_converted(self.path, None, None)
         self._data_key = self._key_record = None
@@ -439,7 +440,7 @@ class Catalog:
         """暗号化カタログの内容を、通常のカタログとして別のファイルに書き出す(元のカタログは変えない)。"""
         target = Path(target)
         if target.resolve() == self.path.resolve():
-            raise CatalogError("書き出し先に元のカタログと同じファイルは指定できません")
+            raise CatalogError(tr('書き出し先に元のカタログと同じファイルは指定できません'))
         if not self.encrypted:
             shutil.copyfile(self.path, target)
             return
@@ -490,13 +491,13 @@ class Catalog:
     def extract_db(self, drive_id: str, name: str = FILES_DB, backup: str | None = None) -> Path:
         """通常のカタログ内の DB をキャッシュへ展開し、そのパスを返す(展開済みなら再利用)。"""
         if self.encrypted:
-            raise CatalogError("暗号化カタログの DB はディスクに展開しません (db_source を使ってください)")
+            raise CatalogError(tr('暗号化カタログの DB はディスクに展開しません (db_source を使ってください)'))
         member = self._member(drive_id, name, backup)
         with self._lock, zipfile.ZipFile(self.path) as archive:
             try:
                 info = archive.getinfo(member)
             except KeyError:
-                raise CatalogError(f"カタログ内に {member} がありません") from None
+                raise CatalogError(tr('カタログ内に {member} がありません').format(member=member)) from None
             target = self._cache_path(member, info)
             if target.is_file() and target.stat().st_size == info.file_size:
                 return target
@@ -547,7 +548,7 @@ class Catalog:
             try:
                 info = archive.getinfo(member)
             except KeyError:
-                raise CatalogError(f"カタログ内に {member} がありません") from None
+                raise CatalogError(tr('カタログ内に {member} がありません').format(member=member)) from None
             with archive.open(info) as stream:
                 if not self.encrypted:
                     return stream.read()
@@ -561,7 +562,7 @@ class Catalog:
             try:
                 info = archive.getinfo(member)
             except KeyError:
-                raise CatalogError(f"カタログ内に {member} がありません") from None
+                raise CatalogError(tr('カタログ内に {member} がありません').format(member=member)) from None
             plain = self._decrypt_member(archive, info)
         if isinstance(plain, Path):
             return _Source(readonly_uri(plain), path=plain)
@@ -778,7 +779,7 @@ class Catalog:
         backups: list[dict] = drive.setdefault("backups", [])
         chosen = next((backup for backup in backups if backup["stamp"] == stamp), None)
         if chosen is None:
-            raise CatalogError(f"バックアップが見つかりません: {stamp}")
+            raise CatalogError(tr('バックアップが見つかりません: {stamp}').format(stamp=stamp))
         backups.remove(chosen)
 
         current_stamp = self._backup_stamp(drive, backups + [chosen])
@@ -819,10 +820,10 @@ class Catalog:
         """グループ名を変える。既にある名前にすると、そのグループと 1 つにまとまる。"""
         new_name = new_name.strip()
         if not new_name:
-            raise CatalogError("グループ名が空です")
+            raise CatalogError(tr('グループ名が空です'))
         members = [drive for drive in self.drives if drive.get("group") == old_name]
         if not members:
-            raise CatalogError(f"グループが見つかりません: {old_name}")
+            raise CatalogError(tr('グループが見つかりません: {old_name}').format(old_name=old_name))
         if new_name == old_name:
             return
         for drive in members:
@@ -859,7 +860,7 @@ class Catalog:
         by_id = {drive["id"]: drive for drive in self.drives}
         for drive_id in (*remove_ids, *drop_ids):
             if drive_id not in by_id:
-                raise CatalogError(f"ドライブが見つかりません: {drive_id}")
+                raise CatalogError(tr('ドライブが見つかりません: {drive_id}').format(drive_id=drive_id))
 
         original = copy.deepcopy(self.drives)
         if layout is None:
@@ -869,7 +870,7 @@ class Catalog:
             for drive_id, group in layout:
                 drive = by_id.get(drive_id)
                 if drive is None or drive_id in remove_ids:
-                    raise CatalogError(f"ドライブが見つかりません: {drive_id}")
+                    raise CatalogError(tr('ドライブが見つかりません: {drive_id}').format(drive_id=drive_id))
                 group = (group or "").strip()
                 if group != drive.get("group", ""):
                     drive.pop("group_comment", None)  # 取り込み元のグループのコメントは、グループを変えたら残さない
@@ -881,7 +882,7 @@ class Catalog:
             expected = {drive_id for drive_id in by_id if drive_id not in remove_ids}
             if len(ordered) != len(expected) or {drive["id"] for drive in ordered} != expected:
                 self.drives[:] = original
-                raise CatalogError("並び順にすべてのドライブが含まれていません")
+                raise CatalogError(tr('並び順にすべてのドライブが含まれていません'))
 
         delete_prefixes = [f"drives/{drive_id}/" for drive_id in remove_ids]
         for drive_id in drop_ids:
@@ -916,7 +917,7 @@ class Catalog:
         暗号化の有無が違っても写せる (コピー先の鍵で暗号化し直す)。戻り値はコピー先に登録したドライブの情報。
         """
         if target is self or target.path.resolve() == self.path.resolve():
-            raise CatalogError("同じカタログにはコピーできません")
+            raise CatalogError(tr('同じカタログにはコピーできません'))
         with self._lock, zipfile.ZipFile(self.path) as archive:
             members = set(archive.namelist())
         taken = {drive["id"] for drive in target.drives}
@@ -926,7 +927,7 @@ class Catalog:
             drive = self.drive(drive_id)
             files_member = self._member(drive_id, FILES_DB)
             if files_member not in members:
-                raise CatalogError(f"カタログ内に {files_member} がありません")
+                raise CatalogError(tr('カタログ内に {files_member} がありません').format(files_member=files_member))
             record = copy.deepcopy({key: value for key, value in drive.items() if key != "backups"})
             record["id"] = drive_id if drive_id not in taken else uuid.uuid4().hex
             record["backups"] = []
@@ -1012,7 +1013,7 @@ class Catalog:
             try:
                 info = zin.getinfo(source.member)
             except KeyError:
-                raise CatalogError(f"カタログ内に {source.member} がありません") from None
+                raise CatalogError(tr('カタログ内に {member} がありません').format(member=source.member)) from None
             if not origin.encrypted:
                 if data_key is None:
                     _copy_member_raw(zin, zout, info, name)
@@ -1083,7 +1084,7 @@ class Catalog:
     def _write_converted(self, target: Path, new_key: bytes | None, new_record: dict | None) -> None:
         """全メンバーを暗号化(または復号)し直したカタログを ``target`` に書く。平文の一時ファイルは作らない。"""
         if (self._data_key is None) == (new_key is None):
-            raise CatalogError("暗号化の状態が変わらない変換はできません")
+            raise CatalogError(tr('暗号化の状態が変わらない変換はできません'))
         temp_path = target.with_name(target.name + ".tmp")
         try:
             with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zout, zipfile.ZipFile(self.path) as zin:

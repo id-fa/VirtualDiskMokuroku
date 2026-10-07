@@ -89,7 +89,7 @@ KEY_LABELS: dict[str, str] = {
     "volume_label": "ボリュームラベル",
     # Virtual CD-ROM Case からのインポート
     "property_type": "プロパティの種類",
-    "property": "プロパティ",
+    "property": "その他のプロパティ",
     "crc32": "CRC32",
     "tag_format": "タグの形式",
     "source": "ソース",

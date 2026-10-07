@@ -31,6 +31,7 @@ from ..core.settings import AppSettings
 from ..core.volume import VolumeInfo, list_volumes
 from ..pipeline import scan_into_catalog
 from .style import apply_selection_style
+from ..i18n import tr
 
 _DRIVE_TYPE_LABELS = {
     "fixed": "ローカル",
@@ -89,7 +90,7 @@ class ScanDialog(QDialog):
 
     def __init__(self, catalog: Catalog, app_settings: AppSettings, parent=None, target_drive_id: str | None = None):
         super().__init__(parent)
-        self.setWindowTitle("ドライブの追加 / 更新")
+        self.setWindowTitle(tr('ドライブの追加 / 更新'))
         self.resize(760, 520)
         self._catalog = catalog
         self._app_settings = app_settings
@@ -101,10 +102,10 @@ class ScanDialog(QDialog):
         self.updated_drive_id: str | None = None  # スキャン成功時に設定
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("スキャンするドライブを選択してください。"))
+        layout.addWidget(QLabel(tr('スキャンするドライブを選択してください。')))
 
         self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels(["ドライブ", "ラベル", "種類", "形式", "容量", "空き", "カタログ登録"])
+        self._table.setHorizontalHeaderLabels([tr('ドライブ'), tr('ラベル'), tr('種類'), tr('形式'), tr('容量'), tr('空き'), tr('カタログ登録')])
         self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -119,13 +120,13 @@ class ScanDialog(QDialog):
         form = QFormLayout()
         self._target = QComboBox()
         self._target.currentIndexChanged.connect(self._on_target_changed)
-        form.addRow("登録先:", self._target)
+        form.addRow(tr('登録先:'), self._target)
         self._name = QLineEdit()
-        form.addRow("表示名:", self._name)
+        form.addRow(tr('表示名:'), self._name)
         self._source = QComboBox()
         for value, label in _SOURCE_LABELS:
-            self._source.addItem(label, value)
-        form.addRow("取得方法:", self._source)
+            self._source.addItem(tr(label), value)
+        form.addRow(tr('取得方法:'), self._source)
         layout.addLayout(form)
 
         self._status = QLabel("")
@@ -136,14 +137,14 @@ class ScanDialog(QDialog):
         layout.addWidget(self._progress)
 
         buttons = QDialogButtonBox()
-        self._refresh_button = QPushButton("再読み込み")
+        self._refresh_button = QPushButton(tr('再読み込み'))
         self._refresh_button.clicked.connect(self._load_volumes)
         buttons.addButton(self._refresh_button, QDialogButtonBox.ButtonRole.ResetRole)
-        self._start_button = QPushButton("スキャン開始")
+        self._start_button = QPushButton(tr('スキャン開始'))
         self._start_button.setDefault(True)
         self._start_button.clicked.connect(self._start)
         buttons.addButton(self._start_button, QDialogButtonBox.ButtonRole.ActionRole)
-        self._close_button = QPushButton("閉じる")
+        self._close_button = QPushButton(tr('閉じる'))
         self._close_button.clicked.connect(self.reject)
         buttons.addButton(self._close_button, QDialogButtonBox.ButtonRole.RejectRole)
         layout.addWidget(buttons)
@@ -157,8 +158,8 @@ class ScanDialog(QDialog):
         preselect = -1
         for row, volume in enumerate(self._volumes):
             matches = self._catalog.find_matching_drives(volume, volume.root)
-            registered = "、".join(drive["name"] for drive in matches)
-            kind = _DRIVE_TYPE_LABELS.get(volume.drive_type, volume.drive_type)
+            registered = tr("、").join(drive["name"] for drive in matches)
+            kind = tr(_DRIVE_TYPE_LABELS.get(volume.drive_type, volume.drive_type))
             if volume.bus_type:
                 kind += f" ({volume.bus_type})"
             values = [
@@ -181,7 +182,7 @@ class ScanDialog(QDialog):
             self._table.selectRow(preselect)
         elif self._target_drive_id:
             name = self._catalog.drive(self._target_drive_id)["name"]
-            self._status.setText(f"「{name}」に一致するドライブが接続されていません。接続してから「再読み込み」を押してください。")
+            self._status.setText(tr('「{name}」に一致するドライブが接続されていません。接続してから「再読み込み」を押してください。').format(name=name))
         self._on_volume_selected()
 
     def _selected_volume(self) -> VolumeInfo | None:
@@ -195,8 +196,8 @@ class ScanDialog(QDialog):
         if volume is not None:
             matches = self._catalog.find_matching_drives(volume, volume.root)
             for drive in matches:
-                self._target.addItem(f"更新: {drive['name']}", drive["id"])
-            self._target.addItem("新規に追加", None)
+                self._target.addItem(tr('更新: {name}').format(name=drive['name']), drive["id"])
+            self._target.addItem(tr('新規に追加'), None)
             if self._target_drive_id:
                 index = self._target.findData(self._target_drive_id)
                 if index >= 0:
@@ -236,7 +237,7 @@ class ScanDialog(QDialog):
         if es is None and source == scanner.SOURCE_EVERYTHING:
             QMessageBox.warning(
                 self, self.windowTitle(),
-                "es.exe が見つかりません。「設定」→「アプリ設定」で es.exe の場所を指定してください。",
+                tr('es.exe が見つかりません。「設定」→「アプリ設定」で es.exe の場所を指定してください。'),
             )  # fmt: skip
             return
         self._set_running(True)
@@ -255,67 +256,63 @@ class ScanDialog(QDialog):
         for widget in (self._table, self._target, self._name, self._source, self._refresh_button):
             widget.setEnabled(not running)
         self._start_button.setEnabled(not running)
-        self._close_button.setText("キャンセル" if running else "閉じる")
+        self._close_button.setText(tr('キャンセル') if running else tr('閉じる'))
         self._progress.setVisible(running)
         self._progress.setRange(0, 0)
 
     def _on_progress(self, phase: str, count: int) -> None:
         if phase.startswith("source:"):
-            text = "ファイルリストを取得中… (直接走査)"
+            text = tr('ファイルリストを取得中… (直接走査)')
             if phase.endswith(scanner.SOURCE_EVERYTHING):
-                text = "ファイルリストを取得中… (Everything)"
+                text = tr('ファイルリストを取得中… (Everything)')
                 scan_settings = self._catalog.settings.get("scan", {})
                 if scan_settings.get("with_ctime", True) or scan_settings.get("with_attrs", True):
                     text += (
-                        "\nEverything が作成日時・属性をインデックスしていない場合、ファイル数に応じて数十秒〜数分かかります"
-                        "(カタログ設定で取得をオフにすると数秒で終わります)。"
+                        tr('\nEverything が作成日時・属性をインデックスしていない場合、ファイル数に応じて数十秒〜数分かかります(カタログ設定で取得をオフにすると数秒で終わります)。')
                     )
             self._status.setText(text)
         elif phase == "read":
-            self._status.setText(f"ファイルリストを取得中… {count:,} 件")
+            self._status.setText(tr('ファイルリストを取得中… {count:,} 件').format(count=count))
         elif phase == "build":
-            self._status.setText(f"データベースを作成中… {count:,} 件")
+            self._status.setText(tr('データベースを作成中… {count:,} 件').format(count=count))
         elif phase == "context_total":
             self._in_context_phase = True
             self._context_total = count
             self._progress.setRange(0, max(count, 1))
             self._progress.setValue(0)
-            self._status.setText(f"拡張コンテキストを取得中… 0 / {count:,} 件")
+            self._status.setText(tr('拡張コンテキストを取得中… 0 / {count:,} 件').format(count=count))
         elif phase == "context":
             self._progress.setValue(count)
-            self._status.setText(f"拡張コンテキストを取得中… {count:,} / {self._context_total:,} 件")
+            self._status.setText(tr('拡張コンテキストを取得中… {count:,} / {_context_total:,} 件').format(count=count, _context_total=self._context_total))
         elif phase == "save":
             self._in_context_phase = False
             self._progress.setRange(0, 0)
-            self._status.setText("カタログに保存中…")
+            self._status.setText(tr('カタログに保存中…'))
 
     def _on_succeeded(self, drive: dict, result: scanner.ScanResult, context_stats) -> None:
         self.updated_drive_id = drive["id"]
         stats = result.stats
         lines = [
-            f"「{drive['name']}」を登録しました。",
-            f"ファイル {stats.file_count:,} / フォルダ {stats.dir_count:,} / 合計 {format_size(stats.total_size)}"
-            f" (無視 {stats.ignored_count:,} 件、取得元: {'Everything' if result.source == scanner.SOURCE_EVERYTHING else '直接走査'})",
+            tr('「{name}」を登録しました。').format(name=drive['name']),
+            tr('ファイル {file_count:,} / フォルダ {dir_count:,} / 合計 {total_size} (無視 {ignored_count:,} 件、取得元: {0})').format('Everything' if result.source == scanner.SOURCE_EVERYTHING else tr('直接走査'), file_count=stats.file_count, dir_count=stats.dir_count, total_size=format_size(stats.total_size), ignored_count=stats.ignored_count),
         ]
         if context_stats is not None:
             lines.append(
-                f"拡張コンテキスト: 取得 {context_stats.processed:,} 件 / 引き継ぎ {context_stats.reused:,} 件"
-                f" / エラー {context_stats.errors:,} 件"
+                tr('拡張コンテキスト: 取得 {processed:,} 件 / 引き継ぎ {reused:,} 件 / エラー {errors:,} 件').format(processed=context_stats.processed, reused=context_stats.reused, errors=context_stats.errors)
             )
             if context_stats.cancelled:
                 lines.append(
-                    "拡張コンテキストの取得は途中でキャンセルされました。取得できた分までを登録しています"
-                    "(次回このドライブを更新すると、残りのファイルだけを取得します)。"
+                    tr('拡張コンテキストの取得は途中でキャンセルされました。取得できた分までを登録しています(次回このドライブを更新すると、残りのファイルだけを取得します)。')
                 )
-        lines += [f"注意: {warning}" for warning in result.warnings]
+        lines += [tr('注意: {warning}').format(warning=warning) for warning in result.warnings]
         self._status.setText("\n".join(lines))
 
     def _on_failed(self, message: str) -> None:
         if message:
-            self._status.setText(f"スキャンに失敗しました: {message}")
-            QMessageBox.critical(self, self.windowTitle(), f"スキャンに失敗しました。\n\n{message}")
+            self._status.setText(tr('スキャンに失敗しました: {message}').format(message=message))
+            QMessageBox.critical(self, self.windowTitle(), tr('スキャンに失敗しました。\n\n{message}').format(message=message))
         else:
-            self._status.setText("キャンセルしました。")
+            self._status.setText(tr('キャンセルしました。'))
 
     def _on_thread_finished(self) -> None:
         self._worker = None
@@ -330,9 +327,9 @@ class ScanDialog(QDialog):
     def reject(self) -> None:
         if self._worker is not None:
             if self._in_context_phase:
-                self._status.setText("キャンセルしています… (取得できた拡張コンテキストまでを登録します)")
+                self._status.setText(tr('キャンセルしています… (取得できた拡張コンテキストまでを登録します)'))
             else:
-                self._status.setText("キャンセルしています…")
+                self._status.setText(tr('キャンセルしています…'))
             self._worker.cancel()
             return
         if self.updated_drive_id:

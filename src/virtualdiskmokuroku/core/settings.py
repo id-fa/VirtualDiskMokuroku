@@ -25,6 +25,7 @@ class AppSettings:
     result_limit: int = 100000  # フィルタ/検索結果の表示上限
     memory_limit_mb: int = 512  # 暗号化カタログの DB をメモリ上で開く上限。超える分だけ一時フォルダに復号する
     recent_catalogs: list[str] = field(default_factory=list)
+    language: str = "auto"  # 表示言語: auto (OS の表示言語が日本語なら日本語、それ以外は英語) / ja / en
     view_mode: str = "details"  # 一覧の表示形式: details / tiles / thumb_list
     thumb_zoom: bool = False  # サムネイルを 2 倍に拡大して並べる
     # 敷き詰め表示でサムネイルの下に出す項目 (name / resolution / size / mtime)

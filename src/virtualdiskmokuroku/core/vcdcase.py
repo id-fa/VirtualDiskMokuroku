@@ -41,6 +41,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from .errors import CatalogError, ScanCancelled
+from ..i18n import tr
 
 SUPPORTED_SCHEMA = 12
 DEFAULT_ENCODING = "cp932"
@@ -173,7 +174,7 @@ class _Reader:
     def take(self, size: int) -> bytes:
         end = self.pos + size
         if end > len(self.data):
-            raise IndexError("データが途中で終わっています")
+            raise IndexError(tr('データが途中で終わっています'))
         chunk = self.data[self.pos : end]
         self.pos = end
         return chunk
@@ -254,20 +255,20 @@ def parse_case(
     reader = _Reader(data)
     header = data[: _CLASS_HEAD.size + len(_CLASS_NAME)]
     if len(header) < _CLASS_HEAD.size or not header.endswith(_CLASS_NAME):
-        raise CatalogError(_NOT_A_CASE)
+        raise CatalogError(tr(_NOT_A_CASE))
     tag, schema, name_length = reader.unpack(_CLASS_HEAD)
     if tag != 0xFFFF or name_length != len(_CLASS_NAME):
-        raise CatalogError(_NOT_A_CASE)
+        raise CatalogError(tr(_NOT_A_CASE))
     try:
         reader.take(name_length + _HEADER_UNKNOWN)
         case = _parse_records(reader, schema, encoding, is_cancelled)
         if reader.pos != len(data):
-            raise IndexError("末尾に読み残しがあります")
+            raise IndexError(tr('末尾に読み残しがあります'))
         return case
     except (struct.error, IndexError) as error:
-        message = f"Virtual CD-ROM Case のカタログを読み取れません (位置 0x{reader.pos:X} 付近で構造が合いません)"
+        message = tr('Virtual CD-ROM Case のカタログを読み取れません (位置 0x{pos:X} 付近で構造が合いません)').format(pos=reader.pos)
         if schema != SUPPORTED_SCHEMA:
-            message += f"。形式バージョン {schema} には対応していません (確認済みは {SUPPORTED_SCHEMA})"
+            message += tr('。形式バージョン {schema} には対応していません (確認済みは {SUPPORTED_SCHEMA})').format(schema=schema, SUPPORTED_SCHEMA=SUPPORTED_SCHEMA)
         raise CatalogError(message) from error
 
 
@@ -295,7 +296,7 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
         reader.take(_RECORD_UNKNOWN)
         has_crc, crc, children = reader.unpack(_RECORD_TAIL)
         if children * _MIN_RECORD_SIZE > data_size - reader.pos:
-            raise IndexError("子の数が不正です")
+            raise IndexError(tr('子の数が不正です'))
         comment = _raw(strings[0]) if strings else b""
         return (
             size, kind, archive_type, _filetime(mtime), _filetime(ctime), name, comment, properties,

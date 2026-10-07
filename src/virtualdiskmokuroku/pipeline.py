@@ -15,6 +15,7 @@ from .core.drive_db import ProgressCallback
 from .core.es_client import EsClient
 from .core.ignore import IgnoreRules
 from .core.workdb import open_shared_memory_db, remove_quietly
+from .i18n import tr
 
 
 @dataclass(slots=True)
@@ -86,8 +87,8 @@ def scan_into_catalog(
 
             missing = unavailable_kinds(context_settings)
             if missing:
-                labels = "、".join(EXTRACTORS[kind].label for kind in missing)
-                warnings.append(f"必要なライブラリが無いため取得しなかった拡張コンテキストがあります: {labels}")
+                labels = tr("、").join(tr(EXTRACTORS[kind].label) for kind in missing)
+                warnings.append(tr('必要なライブラリが無いため取得しなかった拡張コンテキストがあります: {labels}').format(labels=labels))
 
             previous = None
             if drive_id and catalog.drive(drive_id).get("has_context"):

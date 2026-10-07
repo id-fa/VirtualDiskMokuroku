@@ -8,6 +8,7 @@ from collections.abc import Iterable
 
 from .formatting import format_attributes, format_filetime
 from .search import Row
+from ..i18n import tr
 
 FORMAT_TXT = "txt"
 FORMAT_CSV = "csv"
@@ -21,7 +22,7 @@ def export_rows(path: str | os.PathLike[str], rows: Iterable[Row], fmt: str) -> 
     with open(path, "w", encoding="utf-8-sig", newline="") as f:
         if fmt == FORMAT_CSV:
             writer = csv.writer(f)
-            writer.writerow(CSV_HEADER)
+            writer.writerow([tr(header) for header in CSV_HEADER])
             for row in rows:
                 entry = row.entry
                 writer.writerow([
@@ -31,7 +32,7 @@ def export_rows(path: str | os.PathLike[str], rows: Iterable[Row], fmt: str) -> 
                     format_filetime(entry.mtime),
                     format_filetime(entry.ctime),
                     format_attributes(entry.attrs),
-                    "フォルダ" if entry.is_dir else "ファイル",
+                    tr('フォルダ') if entry.is_dir else tr('ファイル'),
                     row.drive_name,
                 ])  # fmt: skip
                 count += 1

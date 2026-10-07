@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .errors import ScanCancelled
+from ..i18n import tr
 
 FILE_ATTRIBUTE_DIRECTORY = 0x10
 
@@ -197,7 +198,7 @@ class EsClient:
         self.instance = instance or None
         self.timeout = timeout
         if not self.es_path.is_file():
-            raise EsNotFoundError(f"es.exe が見つかりません: {self.es_path}")
+            raise EsNotFoundError(tr('es.exe が見つかりません: {es_path}').format(es_path=self.es_path))
 
     def _run(self, args: list[str], is_cancelled: Callable[[], bool] | None = None) -> str:
         command = [str(self.es_path)]
@@ -224,10 +225,10 @@ class EsClient:
                     process.communicate()
                     if cancelled:
                         raise ScanCancelled() from None
-                    raise EsError("es.exe がタイムアウトしました") from None
+                    raise EsError(tr('es.exe がタイムアウトしました')) from None
         if process.returncode != 0:
-            detail = _ES_EXIT_MESSAGES.get(process.returncode) or stderr.decode("mbcs", "replace").strip()
-            message = f"es.exe がエラー終了しました (code {process.returncode}): {detail}"
+            detail = tr(_ES_EXIT_MESSAGES.get(process.returncode, "")) or stderr.decode("mbcs", "replace").strip()
+            message = tr('es.exe がエラー終了しました (code {returncode}): {detail}').format(returncode=process.returncode, detail=detail)
             if process.returncode == _ES_EXIT_NOT_RUNNING:
                 raise EverythingNotRunningError(message)
             raise EsError(message)
@@ -245,7 +246,7 @@ class EsClient:
         try:
             return int(output.replace(",", ""))
         except ValueError:
-            raise EsError(f"件数を解釈できません: {output!r}") from None
+            raise EsError(tr('件数を解釈できません: {output!r}').format(output=output)) from None
 
     def export(
         self,
@@ -319,13 +320,13 @@ class EsClient:
                     if process.poll() is not None:
                         poke()
                     elif self.timeout is not None and waited >= self.timeout:
-                        raise EsError("es.exe がタイムアウトしました") from None
+                        raise EsError(tr('es.exe がタイムアウトしました')) from None
                     continue
                 waited = 0.0
                 if item is None:
                     return
                 if isinstance(item, BaseException):
-                    raise EsError(f"es.exe の出力を受け取れません ({item})") from item
+                    raise EsError(tr('es.exe の出力を受け取れません ({item})').format(item=item)) from item
                 if is_cancelled is not None and is_cancelled():
                     raise ScanCancelled()
                 yield item
@@ -335,8 +336,8 @@ class EsClient:
             returncode = process.wait()
             if returncode != 0:
                 stderr = process.stderr.read() if process.stderr else b""
-                detail = _ES_EXIT_MESSAGES.get(returncode) or stderr.decode("mbcs", "replace").strip()
-                message = f"es.exe がエラー終了しました (code {returncode}): {detail}"
+                detail = tr(_ES_EXIT_MESSAGES.get(returncode, "")) or stderr.decode("mbcs", "replace").strip()
+                message = tr('es.exe がエラー終了しました (code {returncode}): {detail}').format(returncode=returncode, detail=detail)
                 if returncode == _ES_EXIT_NOT_RUNNING:
                     raise EverythingNotRunningError(message)
                 raise EsError(message)

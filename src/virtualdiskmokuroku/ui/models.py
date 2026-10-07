@@ -7,6 +7,7 @@ from PySide6.QtGui import QIcon
 
 from ..core.formatting import format_attributes, format_bytes, format_filetime, format_size
 from ..core.search import Row, extension_of
+from ..i18n import tr
 
 COL_NAME, COL_SIZE, COL_MTIME, COL_TYPE, COL_ATTRS, COL_LOCATION, COL_DRIVE = range(7)
 HEADERS = ["名前", "サイズ", "更新日時", "種類", "属性", "場所", "ドライブ"]
@@ -16,9 +17,9 @@ _AnyIndex = QModelIndex | QPersistentModelIndex
 
 def type_text(row: Row) -> str:
     if row.entry.is_dir:
-        return "ファイル フォルダー"
+        return tr('ファイル フォルダー')
     extension = extension_of(row.entry.name)
-    return f"{extension.upper()} ファイル" if extension else "ファイル"
+    return tr('{upper} ファイル').format(upper=extension.upper()) if extension else tr('ファイル')
 
 
 _SORT_KEYS = {
@@ -72,7 +73,7 @@ class FileTableModel(QAbstractTableModel):
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
-            return HEADERS[section]
+            return tr(HEADERS[section])
         return None
 
     def data(self, index: _AnyIndex, role: int = Qt.ItemDataRole.DisplayRole):
@@ -104,9 +105,9 @@ class FileTableModel(QAbstractTableModel):
                 return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         elif role == Qt.ItemDataRole.ToolTipRole:
             if column == COL_SIZE and entry.size is not None:
-                detail = f"{format_bytes(entry.size)} バイト"
+                detail = tr('{size} バイト').format(size=format_bytes(entry.size))
                 if entry.is_dir:
-                    detail += f"\nファイル {entry.file_count or 0:,} / フォルダ {entry.dir_count or 0:,}"
+                    detail += tr('\nファイル {0:,} / フォルダ {1:,}').format(entry.file_count or 0, entry.dir_count or 0)
                 return detail
             if column == COL_NAME:
                 return row.full_path

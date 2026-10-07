@@ -10,6 +10,7 @@ import codecs
 import locale
 
 from .base import EntryWriter, Extractor, module_available
+from ..i18n import tr
 
 _BOMS = (
     (codecs.BOM_UTF8, "utf-8-sig"),
@@ -124,6 +125,6 @@ class TextExtractor(Extractor):
         with open(path, "rb") as f:
             raw = f.read(self._max_bytes + 1)
         if len(raw) > self._max_bytes:
-            raise ValueError("スキャン後にファイルが大きくなっています")
+            raise ValueError(tr('スキャン後にファイルが大きくなっています'))
         encoding, content = detect_and_decode(raw)
         writer.set_text(encoding, content.removeprefix("﻿"), raw)
