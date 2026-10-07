@@ -286,3 +286,73 @@ def test_failed_update_keeps_original(tmp_path, scanned):
         catalog.put_drive(tmp_path / "missing.db", result, drive_id=drive["id"])
     assert catalog_path.read_bytes() == before
     assert not os.path.exists(str(catalog_path) + ".tmp")
+
+
+def test_reorganize_and_copy_drives(tmp_path, scanned):
+    _tree, _files, db_path, result = scanned
+    cache = tmp_path / "cache"
+    catalog = Catalog.create(tmp_path / "org.vdmoku", cache_root=cache)
+    fake_context = tmp_path / "context.db"
+    fake_context.write_bytes(b"context")
+    ids = []
+    for name in ("a", "b", "c", "d"):
+        drive = catalog.put_drive(db_path, result, name=name, context_db_path=fake_context if name in "ab" else None)
+        ids.append(drive["id"])
+    a, b, c, d = ids
+    catalog.set_drive_group(b, "写真")
+    catalog.put_drive(db_path, result, drive_id=a, context_db_path=fake_context)  # バックアップ世代にも context.db が残る
+    stamp = catalog.drive(a)["backups"][0]["stamp"]
+    assert catalog.extract_context_db(a) is not None and catalog.extract_context_db(a, backup=stamp) is not None
+
+    # 並び替え + グループ変更 + 1 台削除 + 1 台は拡張コンテキストだけ削除 (書き換えは 1 回)
+    catalog.reorganize([(d, "写真"), (b, None), (a, " 写真 ")], remove=[c], drop_context=[a, c])
+    reopened = Catalog.open(catalog.path, cache_root=cache)
+    assert [(drive["name"], drive.get("group")) for drive in reopened.drives] == [("d", "写真"), ("b", None), ("a", "写真")]
+    assert reopened.group_names() == ["写真"]
+    drive_a = reopened.drive(a)
+    assert not drive_a["has_context"] and not drive_a["backups"][0]["has_context"]
+    assert reopened.drive(b)["has_context"]
+    with zipfile.ZipFile(catalog.path) as archive:
+        names = archive.namelist()
+    assert f"drives/{a}/{FILES_DB}" in names and f"drives/{a}/backup/{stamp}/{FILES_DB}" in names
+    assert not any(name.startswith(f"drives/{c}/") for name in names)
+    assert not any(name.startswith(f"drives/{a}/") and name.endswith("context.db") for name in names)
+    assert f"drives/{b}/context.db" in names
+    assert not list((cache / reopened.catalog_id / "drives" / a).glob("**/context.*"))
+
+    # 指定の不備は失敗し、カタログも manifest も変わらない
+    before = catalog.path.read_bytes()
+    with pytest.raises(CatalogError):
+        reopened.reorganize([(d, None), (b, None)])  # a が無い
+    with pytest.raises(CatalogError):
+        reopened.reorganize(remove=["nonexistent"])
+    assert catalog.path.read_bytes() == before
+    assert [drive["name"] for drive in reopened.drives] == ["d", "b", "a"]
+
+    # 他のカタログへコピー: 現行世代だけを写し、グループやコメントは引き継ぐ。同じ ID が無ければ ID もそのまま
+    reopened.drive(b)["comment"] = "メモ"
+    reopened.save()
+    target = Catalog.create(tmp_path / "target.vdmoku", cache_root=cache)
+    target.put_drive(db_path, result, name="既存")
+    target_ids = {drive["id"] for drive in target.drives}
+    copied = reopened.copy_drives_to(target, [b, a])
+    assert [drive["id"] for drive in copied] == [b, a] and copied[0]["comment"] == "メモ"
+    assert copied[1]["group"] == "写真" and copied[1]["backups"] == [] and not copied[1]["has_context"]
+    target = Catalog.open(target.path, cache_root=cache)
+    assert [drive["id"] for drive in target.drives] == [*target_ids, b, a]
+    with target.open_drive_db(a) as db:
+        assert db.find_path("docs\\readme.md") is not None
+    assert target.extract_context_db(b).read_bytes() == b"context"
+    assert target.extract_context_db(a) is None
+    with zipfile.ZipFile(target.path) as archive:
+        assert archive.testzip() is None
+        assert not any("/backup/" in name for name in archive.namelist())
+
+    # 同じ ID が既にあれば新しい ID を振る。同じカタログへはコピーできない
+    again = reopened.copy_drives_to(target, [a])
+    assert again[0]["id"] != a and len(Catalog.open(target.path, cache_root=cache).drives) == 4
+    with pytest.raises(CatalogError):
+        reopened.copy_drives_to(reopened, [a])
+    with pytest.raises(CatalogError):
+        reopened.copy_drives_to(Catalog.open(reopened.path, cache_root=cache), [a])
+    assert [drive["name"] for drive in Catalog.open(reopened.path, cache_root=cache).drives] == ["d", "b", "a"]

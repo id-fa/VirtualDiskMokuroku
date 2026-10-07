@@ -55,6 +55,7 @@ from ..core.search import SCOPE_ALL, SCOPE_FOLDER, SCOPE_SUBTREE, DbPool, DriveR
 from ..core.settings import AppSettings
 from .import_dialog import ImportDialog
 from .models import COL_DRIVE, COL_LOCATION, COL_MTIME, COL_NAME, COL_SIZE, COL_TYPE, FileTableModel
+from .organize_dialog import OrganizeDialog
 from .properties_panel import PropertiesPanel
 from .query_worker import QueryWorker
 from .scan_dialog import ScanDialog
@@ -318,6 +319,8 @@ class MainWindow(QMainWindow):
         self.act_set_group = action("グループを変更(&G)…", self.set_current_drive_group)
         self.act_drive_info = action("ドライブ情報(&I)…", self.show_drive_info)
         self.act_remove = action("ドライブをカタログから削除(&D)…", self.remove_current_drive)
+        self.act_organize = action("ドライブの整理(&O)…", self.organize_drives)
+        self.act_organize.setToolTip("並び替え・グループ間の移動・一括削除・拡張コンテキストの削除・他のカタログへのコピー")
         self.restore_menu = QMenu("バックアップから復元(&B)", self)
         self.restore_menu.aboutToShow.connect(self._fill_restore_menu)
 
@@ -360,6 +363,8 @@ class MainWindow(QMainWindow):
         drive_menu.addAction(self.act_drive_info)
         drive_menu.addMenu(self.restore_menu)
         drive_menu.addAction(self.act_remove)
+        drive_menu.addSeparator()
+        drive_menu.addAction(self.act_organize)
 
         settings_menu = menu.addMenu("設定(&S)")
         settings_menu.addAction(self.act_catalog_settings)
@@ -422,6 +427,7 @@ class MainWindow(QMainWindow):
         has_drive = self._location is not None
         for item in (self.act_close, self.act_scan, self.act_catalog_settings, self.act_import_vcdcase):
             item.setEnabled(has_catalog)
+        self.act_organize.setEnabled(has_catalog and bool(self.catalog.drives))  # type: ignore[union-attr]
         for item in (
             self.act_rescan, self.act_rename, self.act_set_group, self.act_drive_info, self.act_remove, self.act_export,
         ):  # fmt: skip
@@ -1224,6 +1230,7 @@ class MainWindow(QMainWindow):
             menu.addAction(self.act_remove)
             menu.addSeparator()
         menu.addAction(self.act_scan)
+        menu.addAction(self.act_organize)
         return menu
 
     def _show_tree_menu(self, position) -> None:
@@ -1352,6 +1359,15 @@ class MainWindow(QMainWindow):
         except (CatalogError, OSError) as error:
             QMessageBox.critical(self, APP_NAME, f"削除に失敗しました。\n\n{error}")
         self._after_catalog_changed()
+
+    def organize_drives(self) -> None:
+        """ドライブの整理 (並び替え・グループ間の移動・一括削除・拡張コンテキストの削除・他のカタログへのコピー)。"""
+        if self.catalog is None:
+            return
+        dialog = OrganizeDialog(self.catalog, self, prepare_rewrite=self._close_databases)
+        dialog.exec()
+        if dialog.reload_needed:
+            self._after_catalog_changed(self._location[0] if self._location is not None else None)
 
     def _fill_restore_menu(self) -> None:
         self.restore_menu.clear()

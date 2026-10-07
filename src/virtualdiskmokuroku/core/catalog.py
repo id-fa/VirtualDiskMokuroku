@@ -34,7 +34,7 @@ import threading
 import time
 import uuid
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -188,6 +188,14 @@ class _Source:
     uri: str
     owner: sqlite3.Connection | None = None  # メモリ上の共有 DB を生かしておくための接続
     path: Path | None = None  # 大きすぎてセッション用一時フォルダに復号した場合のファイル
+
+
+@dataclass(frozen=True)
+class MemberCopy:
+    """``_rewrite`` の ``add`` に渡せる、別のカタログのメンバー (DB) を写す指示。"""
+
+    catalog: Catalog
+    member: str
 
 
 @dataclass(slots=True)
@@ -534,33 +542,39 @@ class Catalog:
                 return buffer.getvalue()
 
     def _load_encrypted(self, member: str) -> _Source:
-        assert self._data_key is not None
         with zipfile.ZipFile(self.path) as archive:
             try:
                 info = archive.getinfo(member)
             except KeyError:
                 raise CatalogError(f"カタログ内に {member} がありません") from None
-            with archive.open(info) as stream:
-                header = crypto.read_header(stream)
-            too_large = header.plain_size is None or header.plain_size > self.memory_limit
-            with archive.open(info) as stream:
-                if too_large:
-                    # メモリに載せるには大きすぎる。セッション用の一時フォルダに復号し、解放時に削除する
-                    path = self.session_dir() / f"{uuid.uuid4().hex}.db"
-                    try:
-                        with open(path, "wb") as destination:
-                            crypto.decrypt_stream(self._data_key, self._associated(member), stream, destination)
-                    except BaseException:
-                        remove_quietly(path)
-                        raise
-                    return _Source(readonly_uri(path), path=path)
-                buffer = io.BytesIO()
-                crypto.decrypt_stream(self._data_key, self._associated(member), stream, buffer)
-        data = buffer.getvalue()
-        buffer.close()
+            plain = self._decrypt_member(archive, info)
+        if isinstance(plain, Path):
+            return _Source(readonly_uri(plain), path=plain)
         # 名前付きのメモリ DB に載せる。同じ URI を開けば UI と検索スレッドの接続が同じ内容を共有できる
-        uri, owner = open_shared_memory_db(data)
+        uri, owner = open_shared_memory_db(plain)
         return _Source(uri, owner=owner)
+
+    def _decrypt_member(self, archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> bytes | Path:
+        """暗号化メンバーの平文をメモリ上に取り出す。``memory_limit`` を超える大きさなら、セッション用の
+        一時フォルダに復号したファイルのパスを返す (呼び出し側が不要になったら削除する)。"""
+        assert self._data_key is not None
+        member = info.filename
+        with archive.open(info) as stream:
+            header = crypto.read_header(stream)
+        too_large = header.plain_size is None or header.plain_size > self.memory_limit
+        with archive.open(info) as stream:
+            if too_large:
+                path = self.session_dir() / f"{uuid.uuid4().hex}.db"
+                try:
+                    with open(path, "wb") as destination:
+                        crypto.decrypt_stream(self._data_key, self._associated(member), stream, destination)
+                except BaseException:
+                    remove_quietly(path)
+                    raise
+                return path
+            buffer = io.BytesIO()
+            crypto.decrypt_stream(self._data_key, self._associated(member), stream, buffer)
+        return buffer.getvalue()
 
     def session_dir(self) -> Path:
         """このプロセス専用の一時フォルダ(メモリに載らない大きな DB の復号先・作業用)。"""
@@ -788,10 +802,131 @@ class Catalog:
         self._rewrite()
 
     def remove_drive(self, drive_id: str) -> None:
-        drive = self.drive(drive_id)
-        self.drives.remove(drive)
-        self._rewrite(delete_prefixes=[f"drives/{drive_id}/"])
-        shutil.rmtree(self.cache_dir / "drives" / drive_id, ignore_errors=True)
+        self.remove_drives([drive_id])
+
+    def remove_drives(self, drive_ids: Iterable[str]) -> None:
+        """複数のドライブをまとめて削除する (バックアップ世代も含む。書き換えは 1 回)。"""
+        self.reorganize(remove=drive_ids)
+
+    def remove_context(self, drive_ids: Iterable[str]) -> None:
+        """ドライブの拡張コンテキストだけを削除する (ファイルリストは残す)。"""
+        self.reorganize(drop_context=drive_ids)
+
+    # ------------------------------------------------------------------ 整理 (並び替え・一括削除・複製)
+    def reorganize(
+        self,
+        layout: Iterable[tuple[str, str | None]] | None = None,
+        *,
+        remove: Iterable[str] = (),
+        drop_context: Iterable[str] = (),
+    ) -> None:
+        """ドライブの並び順とグループをまとめて変え、不要なドライブや拡張コンテキストを削除する (書き換えは 1 回)。
+
+        ``layout`` は残すドライブ全部を新しい順に並べた ``(drive_id, グループ名または None)``。``None`` なら
+        並び順とグループは変えない。``remove`` のドライブはバックアップ世代ごと削除し、``drop_context`` の
+        ドライブは拡張コンテキスト (バックアップ世代の分も) だけを削除する。
+        """
+        remove_ids = list(dict.fromkeys(remove))
+        drop_ids = [drive_id for drive_id in dict.fromkeys(drop_context) if drive_id not in remove_ids]
+        by_id = {drive["id"]: drive for drive in self.drives}
+        for drive_id in (*remove_ids, *drop_ids):
+            if drive_id not in by_id:
+                raise CatalogError(f"ドライブが見つかりません: {drive_id}")
+
+        original = copy.deepcopy(self.drives)
+        if layout is None:
+            ordered = [drive for drive in self.drives if drive["id"] not in remove_ids]
+        else:
+            ordered = []
+            for drive_id, group in layout:
+                drive = by_id.get(drive_id)
+                if drive is None or drive_id in remove_ids:
+                    raise CatalogError(f"ドライブが見つかりません: {drive_id}")
+                group = (group or "").strip()
+                if group != drive.get("group", ""):
+                    drive.pop("group_comment", None)  # 取り込み元のグループのコメントは、グループを変えたら残さない
+                    if group:
+                        drive["group"] = group
+                    else:
+                        drive.pop("group", None)
+                ordered.append(drive)
+            expected = {drive_id for drive_id in by_id if drive_id not in remove_ids}
+            if len(ordered) != len(expected) or {drive["id"] for drive in ordered} != expected:
+                self.drives[:] = original
+                raise CatalogError("並び順にすべてのドライブが含まれていません")
+
+        delete_prefixes = [f"drives/{drive_id}/" for drive_id in remove_ids]
+        for drive_id in drop_ids:
+            drive = by_id[drive_id]
+            drive["has_context"] = False
+            drive["context_partial"] = False
+            delete_prefixes.append(self._member(drive_id, CONTEXT_DB))
+            for backup in drive.get("backups", []):
+                backup["has_context"] = False
+                backup["context_partial"] = False
+                delete_prefixes.append(self._member(drive_id, CONTEXT_DB, backup["stamp"]))
+
+        self.drives[:] = ordered
+        try:
+            self._rewrite(delete_prefixes=delete_prefixes)
+        except BaseException:
+            self.drives[:] = original
+            raise
+        for drive_id in remove_ids:
+            shutil.rmtree(self.cache_dir / "drives" / drive_id, ignore_errors=True)
+        for drive_id in drop_ids:
+            for cached in (self.cache_dir / "drives" / drive_id).glob(f"**/{CONTEXT_DB.rpartition('.')[0]}.*"):
+                remove_quietly(cached)
+
+    def copy_drives_to(
+        self, target: Catalog, drive_ids: Iterable[str], *, groups: dict[str, str | None] | None = None
+    ) -> list[dict]:
+        """ドライブの現行世代 (ファイルリストと拡張コンテキスト) を別のカタログへ複製する。
+
+        バックアップ世代は写さない。ドライブの ID はコピー先に同じ ID が無ければそのまま使い、あれば新しく振る。
+        ``groups`` (drive_id → グループ名) を渡すと、コピー先ではそのグループに入れる (無ければ今のグループのまま)。
+        暗号化の有無が違っても写せる (コピー先の鍵で暗号化し直す)。戻り値はコピー先に登録したドライブの情報。
+        """
+        if target is self or target.path.resolve() == self.path.resolve():
+            raise CatalogError("同じカタログにはコピーできません")
+        with self._lock, zipfile.ZipFile(self.path) as archive:
+            members = set(archive.namelist())
+        taken = {drive["id"] for drive in target.drives}
+        add: dict[str, Path | bytes | MemberCopy] = {}
+        copied: list[dict] = []
+        for drive_id in dict.fromkeys(drive_ids):
+            drive = self.drive(drive_id)
+            files_member = self._member(drive_id, FILES_DB)
+            if files_member not in members:
+                raise CatalogError(f"カタログ内に {files_member} がありません")
+            record = copy.deepcopy({key: value for key, value in drive.items() if key != "backups"})
+            record["id"] = drive_id if drive_id not in taken else uuid.uuid4().hex
+            record["backups"] = []
+            taken.add(record["id"])
+            if groups is not None and drive_id in groups:
+                group = (groups[drive_id] or "").strip()
+                if group != drive.get("group", ""):
+                    record.pop("group_comment", None)
+                    if group:
+                        record["group"] = group
+                    else:
+                        record.pop("group", None)
+            add[target._member(record["id"], FILES_DB)] = MemberCopy(self, files_member)
+            context_member = self._member(drive_id, CONTEXT_DB)
+            if context_member in members:
+                add[target._member(record["id"], CONTEXT_DB)] = MemberCopy(self, context_member)
+            else:
+                record["has_context"] = False
+                record["context_partial"] = False
+            copied.append(record)
+        count = len(target.drives)
+        target.drives.extend(copied)
+        try:
+            target._rewrite(add=add)
+        except BaseException:
+            del target.drives[count:]
+            raise
+        return copied
 
     # ------------------------------------------------------------------ 書き出し
     def _write_manifest(self, zout: zipfile.ZipFile, data_key: bytes | None, key_record: dict | None) -> None:
@@ -812,26 +947,75 @@ class Catalog:
         sealed = crypto.encrypt_bytes(data_key, self._associated(MANIFEST_ENC), payload)
         zout.writestr(zipfile.ZipInfo(MANIFEST_ENC, date_time=time.localtime()[:6]), sealed, zipfile.ZIP_STORED)
 
-    def _add_member(self, zout: zipfile.ZipFile, name: str, source: Path | bytes, data_key: bytes | None) -> None:
+    def _add_member(
+        self, zout: zipfile.ZipFile, name: str, source: Path | bytes | MemberCopy, data_key: bytes | None
+    ) -> None:
+        if isinstance(source, MemberCopy):
+            self._copy_foreign_member(zout, name, source, data_key)
+            return
         if data_key is None:
             if isinstance(source, bytes):
                 zout.writestr(name, source)
             else:
                 zout.write(source, name)
             return
-        info = zipfile.ZipInfo(name, date_time=time.localtime()[:6])
-        info.compress_type = zipfile.ZIP_STORED  # 暗号化の前に圧縮済み
         if isinstance(source, bytes):
             stream, size = io.BytesIO(source), len(source)
         else:
             stream, size = open(source, "rb"), os.path.getsize(source)
-        with stream, zout.open(info, "w", force_zip64=True) as destination:
-            crypto.encrypt_stream(data_key, self._associated(name), stream, destination, plain_size=size)
+        with stream:
+            self._write_stream(zout, name, stream, size, data_key)
+
+    def _write_stream(self, zout: zipfile.ZipFile, name: str, stream, size: int, data_key: bytes | None) -> None:
+        """平文のストリームをメンバーとして書く (``data_key`` があれば暗号化する)。"""
+        info = zipfile.ZipInfo(name, date_time=time.localtime()[:6])
+        info.compress_type = zipfile.ZIP_DEFLATED if data_key is None else zipfile.ZIP_STORED  # 暗号化の前に圧縮済み
+        with zout.open(info, "w", force_zip64=True) as destination:
+            if data_key is None:
+                shutil.copyfileobj(stream, destination, _COPY_CHUNK)
+            else:
+                crypto.encrypt_stream(data_key, self._associated(name), stream, destination, plain_size=size)
+
+    def _copy_foreign_member(self, zout: zipfile.ZipFile, name: str, source: MemberCopy, data_key: bytes | None) -> None:
+        """別のカタログのメンバーを ``name`` として写す。どちらも暗号化されていなければ再圧縮せずに写し、
+        そうでなければ復号して (必要ならこのカタログの鍵で暗号化し直して) 書く。平文は一時ファイルに残さない。"""
+        origin = source.catalog
+        with origin._lock, zipfile.ZipFile(origin.path) as zin:
+            try:
+                info = zin.getinfo(source.member)
+            except KeyError:
+                raise CatalogError(f"カタログ内に {source.member} がありません") from None
+            if not origin.encrypted:
+                if data_key is None:
+                    _copy_member_raw(zin, zout, info, name)
+                else:
+                    with zin.open(info) as stream:
+                        self._write_stream(zout, name, stream, info.file_size, data_key)
+                return
+            if data_key is None:
+                # 暗号化カタログ → 通常のカタログ: 復号しながら直接書く
+                stored = zipfile.ZipInfo(name, date_time=time.localtime()[:6])
+                stored.compress_type = zipfile.ZIP_DEFLATED
+                assert origin._data_key is not None
+                with zin.open(info) as stream, zout.open(stored, "w", force_zip64=True) as destination:
+                    crypto.decrypt_stream(origin._data_key, origin._associated(source.member), stream, destination)
+                return
+            # 暗号化カタログ同士: 鍵が違うので、いったん平文をメモリ (大きければセッション用フォルダ) に置く
+            plain = origin._decrypt_member(zin, info)
+        try:
+            if isinstance(plain, bytes):
+                self._write_stream(zout, name, io.BytesIO(plain), len(plain), data_key)
+            else:
+                with open(plain, "rb") as stream:
+                    self._write_stream(zout, name, stream, os.path.getsize(plain), data_key)
+        finally:
+            if isinstance(plain, Path):
+                remove_quietly(plain)
 
     def _rewrite(
         self,
         *,
-        add: dict[str, Path | bytes] | None = None,
+        add: Mapping[str, Path | bytes | MemberCopy] | None = None,
         rename: dict[str, str] | None = None,
         delete_prefixes: Iterable[str] = (),
     ) -> None:

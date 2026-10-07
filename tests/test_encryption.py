@@ -352,3 +352,64 @@ def test_large_database_uses_session_folder_and_is_removed(encrypted):
     mine.mkdir()
     cleanup_stale_sessions(cache)
     assert not stale.exists() and mine.exists()
+
+
+def test_copy_drives_between_encrypted_and_plain_catalogs(encrypted, scanned, tmp_path):
+    catalog, drive, cache = encrypted
+    _tree, db_path, result = scanned
+    fake_context = tmp_path / "context.db"
+    fake_context.write_bytes(b"context data")
+    other = catalog.put_drive(db_path, result, name="コンテキスト付き", context_db_path=fake_context)
+    catalog.set_drive_group(other["id"], "秘密")
+
+    # 暗号化 → 通常: 復号して写す (平文の一時ファイルは作らない)
+    plain = Catalog.create(tmp_path / "plain.vdmoku", cache_root=cache)
+    copied = catalog.copy_drives_to(plain, [drive["id"], other["id"]])
+    assert [item.get("group") for item in copied] == [None, "秘密"]
+    assert files_on_disk(cache) == []  # 復号は直接コピー先へ書くので、平文の一時ファイルは作らない
+    plain = Catalog.open(plain.path, cache_root=cache)
+    with plain.open_drive_db(drive["id"]) as db:
+        assert db.find_path("a.txt") is not None
+    assert plain.extract_context_db(other["id"]).read_bytes() == b"context data"
+    with zipfile.ZipFile(plain.path) as archive:
+        assert archive.testzip() is None
+        assert archive.read(f"drives/{drive['id']}/{FILES_DB}").startswith(SQLITE_MAGIC)
+    assert files_on_disk(cache / catalog.catalog_id) == []  # 暗号化カタログ側のキャッシュに平文は無い
+
+    # 通常 → 暗号化、暗号化 → 暗号化 (別の鍵): どちらもコピー先の鍵で暗号化される
+    for source in (plain, catalog):
+        target = Catalog.create(tmp_path / f"target-{source.encrypted}.vdmoku", "別の合言葉", cache, encrypt=True, kdf=FAST_KDF)
+        source.copy_drives_to(target, [other["id"]])
+        raw = target.path.read_bytes()
+        assert SQLITE_MAGIC not in raw and b"context data" not in raw and "コンテキスト付き".encode() not in raw
+        reopened = Catalog.open(target.path, "別の合言葉", cache)
+        assert reopened.drive(other["id"])["has_context"]
+        with reopened.open_drive_db(other["id"]) as db:
+            assert db.find_path("docs\\readme.md") is not None
+        assert reopened.read_db_bytes(other["id"], CONTEXT_DB) == b"context data"
+        reopened.close()
+    catalog.release_sources()
+
+    def plaintext_outside_plain_cache():
+        # 通常のカタログ plain.vdmoku のキャッシュ (展開した DB) 以外に平文が無いこと
+        return [path for path in plaintext_files(cache) if str(plain.cache_dir) not in path]
+
+    assert plaintext_outside_plain_cache() == []
+
+    # 大きな DB 扱い (メモリ上限超過) ではセッション用フォルダに復号するが、書き終えたら消す
+    catalog.memory_limit = 16
+    target = Catalog.create(tmp_path / "big.vdmoku", "別の合言葉", cache, encrypt=True, kdf=FAST_KDF)
+    catalog.copy_drives_to(target, [drive["id"]])
+    assert plaintext_outside_plain_cache() == []
+    with Catalog.open(target.path, "別の合言葉", cache).open_drive_db(drive["id"]) as db:
+        assert db.find_path("a.txt") is not None
+    catalog.release_sources()
+
+    # 拡張コンテキストだけの削除と一括削除
+    catalog.remove_context([other["id"]])
+    assert not catalog.drive(other["id"])["has_context"]
+    with zipfile.ZipFile(catalog.path) as archive:
+        assert f"drives/{other['id']}/{CONTEXT_DB}" not in archive.namelist()
+    catalog.remove_drives([drive["id"], other["id"]])
+    with zipfile.ZipFile(catalog.path) as archive:
+        assert sorted(archive.namelist()) == [MANIFEST_ENC, MANIFEST_NAME]

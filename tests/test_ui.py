@@ -697,3 +697,177 @@ def test_drive_groups(window, monkeypatch):
     assert window.open_catalog(path)
     assert [window.tree_model.item(row).data(ROLE_GROUP) for row in range(window.tree_model.rowCount())] == ["保管", None]
     assert window.tree_model.item(0).child(0).data(ROLE_DRIVE) == one
+
+
+def test_organize_dialog(window, tmp_path, monkeypatch):
+    from PySide6.QtCore import QModelIndex
+    from PySide6.QtWidgets import QMessageBox
+
+    from virtualdiskmokuroku.ui.main_window import ROLE_GROUP as MAIN_ROLE_GROUP
+    from virtualdiskmokuroku.ui.organize_dialog import COL_CONTEXT, ROLE_DRIVE, ROLE_GROUP, OrganizeDialog
+
+    move = Qt.DropAction.MoveAction
+    assert wait_until(lambda: len(names(window)) == 7)
+    catalog = window.catalog
+    one, two = [drive["id"] for drive in catalog.drives]
+    # 3 台目は拡張コンテキスト付き
+    db_path = tmp_path / "three.db"
+    result = scanner.scan_to_db(str(tmp_path / "one"), db_path, source=scanner.SOURCE_WALK, ignore=IgnoreRules(DEFAULT_IGNORE))
+    window._close_databases()
+    three = catalog.put_drive(db_path, result, name="ドライブthree", context_db_path=b"context")["id"]
+    window._after_catalog_changed(one)
+    assert wait_until(lambda: len(names(window)) == 7)
+    assert window.act_organize.isEnabled()
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes)
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args, **_kwargs: QMessageBox.StandardButton.Ok)
+    dialog = OrganizeDialog(catalog, window, prepare_rewrite=window._close_databases)
+    model = dialog.model
+
+    def item(drive_id):
+        found = model.match(model.index(0, 0), ROLE_DRIVE, drive_id, 1, Qt.MatchFlag.MatchExactly | Qt.MatchFlag.MatchRecursive)
+        return model.itemFromIndex(found[0])
+
+    assert model.rowCount() == 3 and dialog.layout_of_tree() == [(one, None), (two, None), (three, None)]
+    assert model.item(2, COL_CONTEXT).text() == "あり"
+    assert not dialog.copy_button.isEnabled()  # 選択なし
+
+    # 新しいグループに、選択中のドライブを入れる
+    dialog._select_items([item(one)])
+    dialog.new_group("保管")
+    group = model.item(0)
+    assert group.data(ROLE_GROUP) == "保管" and group.rowCount() == 1
+    assert dialog.layout_of_tree() == [(one, "保管"), (two, None), (three, None)]
+
+    # ドラッグ & ドロップ (モデルの操作): ドライブはグループの中へ入れられるが、ドライブの中へは入れられない
+    mime = model.mimeData([item(two).index()])
+    assert not model.canDropMimeData(mime, move, -1, -1, item(one).index())
+    assert model.canDropMimeData(mime, move, -1, -1, group.index())
+    assert model.dropMimeData(mime, move, -1, -1, group.index()) is False  # 自分で動かすのでビューには消させない
+    assert dialog.layout_of_tree() == [(one, "保管"), (two, "保管"), (three, None)]
+
+    # グループは別のグループの中へは入れられない。最上位では並び替えられる
+    dialog._select_items([item(three)])
+    dialog.new_group("写真")
+    photos = model.item(1)
+    assert photos.data(ROLE_GROUP) == "写真" and dialog.layout_of_tree() == [(one, "保管"), (two, "保管"), (three, "写真")]
+    mime = model.mimeData([group.index()])
+    assert not model.canDropMimeData(mime, move, -1, -1, photos.index())
+    assert not model.canDropMimeData(mime, move, 0, 0, photos.index())
+    assert model.canDropMimeData(mime, move, 2, 0, QModelIndex())
+    model.dropMimeData(mime, move, 2, 0, QModelIndex())
+    assert dialog.layout_of_tree() == [(three, "写真"), (one, "保管"), (two, "保管")]
+    # 自分自身の位置に落としても壊れない
+    mime = model.mimeData([item(one).index()])
+    model.dropMimeData(mime, move, 0, 0, group.index())
+    assert dialog.layout_of_tree() == [(three, "写真"), (one, "保管"), (two, "保管")]
+    # ビュー経由のドロップ (ドロップイベントを合成): two をグループ「写真」の末尾へ
+    from PySide6.QtCore import QPointF
+    from PySide6.QtGui import QDropEvent
+
+    dialog.show()
+    dialog.tree.expandAll()
+    assert wait_until(lambda: dialog.tree.visualRect(item(three).index()).isValid())
+    mime = model.mimeData([item(two).index()])
+    rect = dialog.tree.visualRect(photos.index())
+    event = QDropEvent(QPointF(rect.center()), move, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+    # InternalMove では自分から始まったドラッグしか受けないが、合成したイベントには送り元が無いので一時的に緩める
+    from PySide6.QtWidgets import QAbstractItemView
+
+    dialog.tree.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+    dialog.tree.dropEvent(event)
+    dialog.tree.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
+    assert not event.isAccepted()  # 自分で動かした (ビューに元の行を消させない)
+    assert dialog.layout_of_tree() == [(three, "写真"), (two, "写真"), (one, "保管")]
+    model.dropMimeData(model.mimeData([item(two).index()]), move, -1, -1, group.index())  # 戻す
+    assert dialog.layout_of_tree() == [(three, "写真"), (one, "保管"), (two, "保管")]
+
+    # 上へ / 下へ、グループから外す
+    dialog._select_items([group])
+    dialog.move_up()
+    assert dialog.layout_of_tree() == [(one, "保管"), (two, "保管"), (three, "写真")]
+    dialog._select_items([item(two)])
+    dialog.move_up()
+    dialog.move_up()  # 端ではそのまま
+    assert dialog.layout_of_tree() == [(two, "保管"), (one, "保管"), (three, "写真")]
+    dialog._select_items([item(one)])
+    assert dialog.ungroup_button.isEnabled()
+    dialog.ungroup()
+    assert dialog.layout_of_tree() == [(two, "保管"), (one, None), (three, "写真")]
+    assert [row.data(ROLE_DRIVE) for row in dialog._selected_items()] == [one]
+
+    # グループ名の変更 (既にある名前にすると 1 つにまとまる)
+    dialog._select_items([photos])
+    assert dialog.rename_group_button.isEnabled()
+    dialog.rename_group("アルバム")
+    assert dialog.layout_of_tree() == [(two, "保管"), (one, None), (three, "アルバム")]
+    dialog.rename_group("保管")
+    assert dialog.layout_of_tree() == [(two, "保管"), (three, "保管"), (one, None)]
+    assert model.rowCount() == 2
+
+    # 拡張コンテキストの削除予定 (もう一度押すと取りやめ)
+    dialog._select_items([item(one)])
+    assert not dialog.context_button.isEnabled()
+    dialog._select_items([group])  # グループを選ぶと中のドライブが対象
+    assert dialog.context_button.isEnabled()
+    dialog.toggle_context_removal()
+    assert dialog._context_drop == {three} and group.child(1, COL_CONTEXT).text() == "削除予定"
+    assert "取りやめ" in dialog.context_button.text()
+    dialog.toggle_context_removal()
+    assert dialog._context_drop == set() and group.child(1, COL_CONTEXT).text() == "あり"
+    dialog.toggle_context_removal()
+
+    # 他のカタログへコピー (グループを選ぶと中の全ドライブ)。自分自身へはコピーできない
+    dialog._select_items([group, item(one)])
+    assert dialog.copy_button.isEnabled()
+    target = tmp_path / "copy.vdmoku"
+    copied = dialog.copy_to_catalog(str(target))
+    assert [drive["id"] for drive in copied] == [two, three, one]
+    copied_catalog = Catalog.open(target)
+    assert [(drive["name"], drive.get("group")) for drive in copied_catalog.drives] == [
+        ("ドライブtwo", "保管"), ("ドライブthree", "保管"), ("ドライブone", None),
+    ]  # fmt: skip
+    assert copied_catalog.extract_context_db(three).read_bytes() == b"context"
+    with copied_catalog.open_drive_db(one) as db:
+        assert db.find_path("only_in_one.txt") is not None
+    errors = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda _parent, _title, text: errors.append(text))
+    assert dialog.copy_to_catalog(str(catalog.path)) is None and "自身" in errors[0]
+    # 既存のカタログを選ぶと追加になる (同じ ID があれば振り直す)
+    dialog._select_items([item(one)])
+    assert dialog.copy_to_catalog(str(target))[0]["id"] != one
+    assert len(Catalog.open(target).drives) == 4
+
+    # 削除予定にするとツリーから消える。OK でまとめてカタログへ書き込む
+    dialog._select_items([item(one)])
+    dialog.remove_selected()
+    assert one in dialog._removed and dialog.layout_of_tree() == [(two, "保管"), (three, "保管")]
+    assert "1 台のドライブを削除" in dialog.summary.text() and "拡張コンテキスト" in dialog.summary.text()
+    dialog.accept()
+    assert dialog.changed and dialog.reload_needed
+    reopened = Catalog.open(catalog.path)
+    assert [(drive["id"], drive.get("group")) for drive in reopened.drives] == [(two, "保管"), (three, "保管")]
+    assert not reopened.drive(three)["has_context"] and reopened.extract_context_db(three) is None
+    assert [(drive["id"], drive.get("group")) for drive in catalog.drives] == [(two, "保管"), (three, "保管")]
+    window._after_catalog_changed(two)
+    assert wait_until(lambda: "only_in_two.txt" in names(window))
+
+    # メインウィンドウから: 何も変えずに OK を押すとカタログは書き換えない
+    updated_at = Catalog.read_manifest(catalog.path)["updated_at"]
+    monkeypatch.setattr(OrganizeDialog, "exec", lambda self: self.accept())
+    window.organize_drives()
+    assert Catalog.read_manifest(catalog.path)["updated_at"] == updated_at
+
+    # 並び替えて OK → ツリーが作り直され、表示中のドライブはそのまま
+    def reorder(self):
+        self._select_items([self.model.item(0).child(1)])
+        self.ungroup()
+        self.move_up()
+        self.accept()
+
+    monkeypatch.setattr(OrganizeDialog, "exec", reorder)
+    window.organize_drives()
+    assert [(drive["id"], drive.get("group")) for drive in window.catalog.drives] == [(three, None), (two, "保管")]
+    assert window.tree_model.rowCount() == 2 and window.tree_model.item(1).data(MAIN_ROLE_GROUP) == "保管"
+    assert window._current_drive()["id"] == two
+    assert wait_until(lambda: "only_in_two.txt" in names(window))
