@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import os
 import shutil
 import sqlite3
@@ -79,6 +80,7 @@ _OPEN_PATTERNS = " ".join(f"*{ext}" for ext in (CATALOG_EXTENSION, *LEGACY_CATAL
 _OPEN_FILTER = "カタログ ({patterns})"
 _IMPORT_FILTER = "Virtual CD-ROM Case のカタログ (*.cas);;すべてのファイル (*)"
 _SOURCE_NAMES = {"everything": "Everything", "walk": "直接走査", "vcdcase": "Virtual CD-ROM Case からインポート"}
+_EVERYTHING_URL = "https://www.voidtools.com/"  # ヘルプの文言に含まれる URL (リンクにする)
 _FILTER_DELAY_MS = 180
 
 ROLE_DRIVE = Qt.ItemDataRole.UserRole + 1
@@ -1461,11 +1463,17 @@ class MainWindow(QMainWindow):
                 self.catalog.memory_limit = self.app_settings.memory_limit_mb * 1024 * 1024
             self._run_query()
 
+    def everything_help_box(self) -> QMessageBox:
+        """「Everything の導入方法」のメッセージボックス。URL はクリックで既定のブラウザが開く。"""
+        text = tr('このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。')  # fmt: skip
+        body = html.escape(text).replace("\n", "<br>")
+        body = body.replace(_EVERYTHING_URL, f'<a href="{_EVERYTHING_URL}">{_EVERYTHING_URL}</a>')
+        box = QMessageBox(QMessageBox.Icon.Information, tr('Everything の導入方法'), body, QMessageBox.StandardButton.Ok, self)
+        box.setTextFormat(Qt.TextFormat.RichText)  # リンクを有効にする (QMessageBox はリンクを外部ブラウザで開く)
+        return box
+
     def show_everything_help(self) -> None:
-        QMessageBox.information(
-            self, tr('Everything の導入方法'),
-            tr('このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。'),
-        )  # fmt: skip
+        self.everything_help_box().exec()
 
     def show_about(self) -> None:
         QMessageBox.about(

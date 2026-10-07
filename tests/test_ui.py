@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 pytest.importorskip("PySide6")
 
 from PySide6.QtCore import QCoreApplication, QSettings, Qt  # noqa: E402
-from PySide6.QtWidgets import QApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from virtualdiskmokuroku.core import scanner  # noqa: E402
 from virtualdiskmokuroku.core.catalog import Catalog  # noqa: E402
@@ -251,6 +251,19 @@ def test_cancel_during_context_registers_partial_results(window, tmp_path):
     assert not stats.cancelled and stats.reused == first and stats.processed == 200 - first
     assert not drive["context_partial"]
     window._after_catalog_changed(drive["id"])
+
+
+def test_everything_help_has_clickable_link(window):
+    from PySide6.QtWidgets import QMessageBox
+
+    box = window.everything_help_box()
+    assert box.textFormat() == Qt.TextFormat.RichText and box.icon() == QMessageBox.Icon.Information
+    assert '<a href="https://www.voidtools.com/">https://www.voidtools.com/</a>' in box.text()
+    assert "<br>" in box.text() and "\n" not in box.text()
+    assert "&lt;" not in box.text() and "→" in box.text()  # 通常の文字はエスケープで壊れない
+    label = box.findChild(QLabel, "qt_msgbox_label")
+    assert label is not None and label.openExternalLinks()  # クリックで既定のブラウザが開く
+    box.deleteLater()
 
 
 def test_open_folder_in_explorer(window, tmp_path, monkeypatch):
