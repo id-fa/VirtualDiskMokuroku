@@ -14,6 +14,8 @@ from ..core.formatting import format_size
 from ..importer import ImportOutcome, import_catalog
 from ..i18n import tr
 
+_BAR_SCALE = 1000  # プログレスバーはドライブ 1 台をこの目盛りで表し、ドライブ内の進み具合も見せる
+
 
 class ImportWorker(QThread):
     progress = Signal(str, int)
@@ -50,11 +52,14 @@ class ImportDialog(QDialog):
         self.resize(560, 220)
         self.outcome: ImportOutcome | None = None  # 取り込みに成功すると設定される
         self.error: str | None = None  # 失敗した場合のメッセージ (キャンセルは空文字)
-        self._total = 0
+        self._total = 0  # ドライブ数
+        self._done = 0  # 処理の終わったドライブ数
+        self._entry_total = 0  # 今取り込んでいるドライブのエントリ数
+        self._headline = tr('ファイルを読み込み中…')  # 状態表示の 1 行目 (全体の進み具合)
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(os.path.basename(path)))
-        self._status = QLabel(tr('ファイルを読み込み中…'))
+        self._status = QLabel(self._headline)
         self._status.setWordWrap(True)
         layout.addWidget(self._status, 1)
         self._progress = QProgressBar()
@@ -72,18 +77,54 @@ class ImportDialog(QDialog):
         self._worker.finished.connect(self._on_thread_finished)
         self._worker.start()
 
+    def _set_status(self, headline: str | None = None, detail: str = "") -> None:
+        """1 行目に全体の進み具合、2 行目に今している作業を出す。``headline`` を省くと 1 行目はそのまま。"""
+        if headline is not None:
+            self._headline = headline
+        self._status.setText(f"{self._headline}\n{detail}" if detail else self._headline)
+
+    def _set_bar(self, fraction: float) -> None:
+        """今のドライブの進み具合 (0〜1) をプログレスバーに反映する。"""
+        if self._total:
+            self._progress.setValue(min(self._done * _BAR_SCALE + int(fraction * _BAR_SCALE), self._total * _BAR_SCALE))
+
     def _on_progress(self, phase: str, count: int) -> None:
-        if phase == "import_total":
+        # phase の順序は importer.import_catalog の docstring を参照
+        if phase == "decompress":
+            self._set_status(tr('圧縮されたファイルを展開中… ({size})').format(size=format_size(count)))
+        elif phase == "parse":
+            self._set_status(tr('ファイルを読み込み中… {count:,} 件').format(count=count))
+        elif phase == "import_total":
             self._total = count
-            self._progress.setRange(0, max(count, 1))
+            self._done = 0
+            self._progress.setRange(0, max(count, 1) * _BAR_SCALE)
             self._progress.setValue(0)
-            self._status.setText(tr('ドライブを取り込み中… 0 / {count:,}').format(count=count))
+            self._set_status(tr('ドライブを取り込み中… 0 / {count:,}').format(count=count))
+        elif phase.startswith("drive:"):
+            self._entry_total = count
+            name = phase[len("drive:") :]
+            self._set_status(
+                tr('ドライブを取り込み中… {current:,} / {total:,}: {name}').format(current=self._done + 1, total=self._total, name=name),
+                tr('エントリ {count:,} 件').format(count=count),
+            )
+        elif phase == "read":
+            # DB 作成の前半 (一時テーブルへの書き込み)。バーの前半 3 割を使う
+            self._set_bar(0.3 * min(count / max(self._entry_total, 1), 1.0))
+            self._set_status(detail=tr('ファイルリストを準備中… {count:,} / {total:,} 件').format(count=count, total=self._entry_total))
+        elif phase == "build":
+            self._set_bar(0.3 + 0.6 * min(count / max(self._entry_total, 1), 1.0))
+            self._set_status(detail=tr('データベースを作成中… {count:,} / {total:,} 件').format(count=count, total=self._entry_total))
+        elif phase == "context":
+            self._set_bar(0.9)
+            self._set_status(detail=tr('コメントなどの情報を取り込み中… {count:,} 件').format(count=count))
         elif phase == "import":
-            self._progress.setValue(count)
-            self._status.setText(tr('ドライブを取り込み中… {count:,} / {_total:,}').format(count=count, _total=self._total))
+            self._done = count
+            self._set_bar(0.0)
+            self._set_status(tr('ドライブを取り込み中… {count:,} / {_total:,}').format(count=count, _total=self._total))
         elif phase == "save":
-            self._progress.setRange(0, 0)
-            self._status.setText(tr('カタログに保存中…'))
+            if self._done >= self._total:
+                self._progress.setRange(0, 0)
+            self._set_status(detail=tr('カタログに保存中…'))
 
     def _on_succeeded(self, outcome: ImportOutcome) -> None:
         self.outcome = outcome

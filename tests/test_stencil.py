@@ -190,7 +190,12 @@ def test_import_into_catalog(fsr_path, tmp_path, monkeypatch):
     catalog = Catalog.create(tmp_path / "plain.vdmoku", cache_root=tmp_path / "cache")
     phases: list[tuple[str, int]] = []
     outcome = import_catalog(catalog, fsr_path, progress=lambda phase, count: phases.append((phase, count)))
-    assert phases == [("import_total", 2), ("import", 1), ("import", 2), ("save", 0)]
+    assert phases == [
+        ("parse", 12), ("import_total", 2),
+        ("drive:PHOTOS_2021", 7), ("read", 7), ("build", 7), ("context", 3), ("import", 1),
+        ("drive:仕事の資料", 2), ("read", 2), ("build", 2), ("import", 2),
+        ("save", 0),
+    ]  # fmt: skip
     assert [drive["name"] for drive in outcome.drives] == ["PHOTOS_2021", "仕事の資料"]
     assert (outcome.file_count, outcome.dir_count, outcome.context_count) == (6, 3, 3)
     assert os.listdir(temp_dir) == []  # 作業フォルダは片付ける

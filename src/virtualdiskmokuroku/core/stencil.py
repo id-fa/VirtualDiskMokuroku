@@ -192,17 +192,27 @@ def is_stencil(data: bytes) -> bool:
     return data.startswith(MAGIC[: len(b"File Struct Record Version")])
 
 
+ProgressCallback = Callable[[str, int], None]
+
+
 def parse_stencil(
-    data: bytes, *, encoding: str = DEFAULT_ENCODING, is_cancelled: Callable[[], bool] | None = None
+    data: bytes,
+    *,
+    encoding: str = DEFAULT_ENCODING,
+    is_cancelled: Callable[[], bool] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> StencilFile:
-    """.fsr の中身を読む。``encoding`` は ANSI の文字列 (コメントなど) の文字コード。読めない場合は ``CatalogError``。"""
+    """.fsr の中身を読む。``encoding`` は ANSI の文字列 (コメントなど) の文字コード。読めない場合は ``CatalogError``。
+
+    進捗は ``progress("parse", 読み取ったエントリ数)`` で通知する。
+    """
     if not is_stencil(data) or len(data) < _HEADER_SIZE + 2:
         raise CatalogError(tr(_NOT_A_STENCIL))
     version = data[len(MAGIC) - len(SUPPORTED_VERSION) : _HEADER_SIZE].split(b"\0", 1)[0].decode("ascii", errors="replace")
     reader = _Reader(data)
     reader.pos = _HEADER_SIZE
     try:
-        return _parse(reader, version, encoding, is_cancelled)
+        return _parse(reader, version, encoding, is_cancelled, progress)
     except (struct.error, IndexError, KeyError) as error:
         message = tr('メディアステンシルの記録ファイルを読み取れません (位置 0x{pos:X} 付近で構造が合いません)').format(pos=reader.pos)
         if version != SUPPORTED_VERSION:
@@ -210,21 +220,30 @@ def parse_stencil(
         raise CatalogError(message) from error
 
 
-def read_stencil(path, *, encoding: str = DEFAULT_ENCODING, is_cancelled: Callable[[], bool] | None = None) -> StencilFile:
+def read_stencil(
+    path,
+    *,
+    encoding: str = DEFAULT_ENCODING,
+    is_cancelled: Callable[[], bool] | None = None,
+    progress: ProgressCallback | None = None,
+) -> StencilFile:
     with open(path, "rb") as stream:
         data = stream.read()
-    return parse_stencil(data, encoding=encoding, is_cancelled=is_cancelled)
+    return parse_stencil(data, encoding=encoding, is_cancelled=is_cancelled, progress=progress)
 
 
-def _parse(reader: _Reader, version: str, encoding: str, is_cancelled) -> StencilFile:
+def _parse(reader: _Reader, version: str, encoding: str, is_cancelled, progress) -> StencilFile:
     data_size = len(reader.data)
     count = 0
 
     def check_cancel() -> None:
         nonlocal count
         count += 1
-        if is_cancelled is not None and count % _CANCEL_CHECK_INTERVAL == 0 and is_cancelled():
-            raise ScanCancelled()
+        if count % _CANCEL_CHECK_INTERVAL == 0:
+            if is_cancelled is not None and is_cancelled():
+                raise ScanCancelled()
+            if progress is not None:
+                progress("parse", count)
 
     (root_count,) = reader.unpack(_U16)
     roots: list[StencilRoot] = []
@@ -272,6 +291,8 @@ def _parse(reader: _Reader, version: str, encoding: str, is_cancelled) -> Stenci
             if index == 0:
                 root.comment = text
     # 末尾に (検索結果など) 読み方の分からないデータが続くことがあるので、読み残しは許す
+    if progress is not None:
+        progress("parse", count)
     return StencilFile(version, roots)
 
 

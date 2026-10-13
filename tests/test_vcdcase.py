@@ -232,7 +232,13 @@ def test_import_into_catalog(cas_path, tmp_path, monkeypatch):
     catalog = Catalog.create(tmp_path / "plain.vdmoku", cache_root=tmp_path / "cache")
     phases: list[tuple[str, int]] = []
     outcome = import_vcdcase(catalog, cas_path, progress=lambda phase, count: phases.append((phase, count)))
-    assert phases == [("import_total", 2), ("import", 1), ("import", 2), ("save", 0)]
+    # 読み取り → ドライブごとに (名前とエントリ数 → DB 作成 → コメントなど → 完了) → 保存。コメントの無いドライブでは context は来ない
+    assert phases == [
+        ("parse", 16), ("import_total", 2),
+        ("drive:BACKUP_2003", 9), ("read", 9), ("build", 9), ("context", 8), ("import", 1),
+        ("drive:フロッピー 12", 1), ("read", 1), ("build", 1), ("import", 2),
+        ("save", 0),
+    ]  # fmt: skip
     assert [drive["name"] for drive in outcome.drives] == ["BACKUP_2003", "フロッピー 12"]
     assert (outcome.file_count, outcome.dir_count, outcome.context_count) == (8, 2, 8)
     assert os.listdir(temp_dir) == []  # 作業フォルダは片付ける
@@ -351,9 +357,19 @@ def test_compressed_case_files(tmp_path):
     # インポートでも圧縮なしと同じドライブが登録される
     (tmp_path / "plain.cas").write_bytes(plain)
     (tmp_path / "sample.caz").write_bytes(archived)
-    from_cas = import_vcdcase(Catalog.create(tmp_path / "a.vdmoku", cache_root=tmp_path / "cache"), tmp_path / "plain.cas")
-    from_caz = import_vcdcase(Catalog.create(tmp_path / "b.vdmoku", cache_root=tmp_path / "cache"), tmp_path / "sample.caz")
+    plain_phases: list[tuple[str, int]] = []
+    caz_phases: list[tuple[str, int]] = []
+    from_cas = import_vcdcase(
+        Catalog.create(tmp_path / "a.vdmoku", cache_root=tmp_path / "cache"), tmp_path / "plain.cas",
+        progress=lambda phase, count: plain_phases.append((phase, count)),
+    )  # fmt: skip
+    from_caz = import_vcdcase(
+        Catalog.create(tmp_path / "b.vdmoku", cache_root=tmp_path / "cache"), tmp_path / "sample.caz",
+        progress=lambda phase, count: caz_phases.append((phase, count)),
+    )  # fmt: skip
     assert [drive["name"] for drive in from_caz.drives] == [drive["name"] for drive in from_cas.drives]
+    # 圧縮されていると、展開中の通知 (圧縮後のサイズ) が先に来る
+    assert caz_phases == [("decompress", len(archived)), *plain_phases] and plain_phases[0][0] == "parse"
 
     # 壊れた書庫
     with pytest.raises(CatalogError, match="LZH"):

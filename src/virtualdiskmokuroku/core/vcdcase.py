@@ -254,23 +254,41 @@ def property_items(properties: list[bytes]) -> list[tuple[str, str]]:
     return items
 
 
-def unwrap_compressed(data: bytes) -> bytes:
-    """圧縮して保存した .cas (gzip) / .caz (LZH) なら展開して返す。圧縮されていなければそのまま返す。"""
+ProgressCallback = Callable[[str, int], None]
+
+
+def unwrap_compressed(data: bytes, *, progress: ProgressCallback | None = None) -> bytes:
+    """圧縮して保存した .cas (gzip) / .caz (LZH) なら展開して返す。圧縮されていなければそのまま返す。
+
+    展開する前に ``progress("decompress", 圧縮後のサイズ)`` を呼ぶ (LZH の展開は純 Python なので時間がかかる)。
+    """
     if data.startswith(_GZIP_MAGIC):
+        if progress is not None:
+            progress("decompress", len(data))
         try:
             return gzip.decompress(data)
         except (OSError, EOFError, zlib.error) as error:
             raise CatalogError(tr('圧縮された .cas を展開できません ({error})').format(error=error)) from error
     if lzh.is_lzh(data):
+        if progress is not None:
+            progress("decompress", len(data))
         return lzh.extract_first(data)
     return data
 
 
 def parse_case(
-    data: bytes, *, encoding: str = DEFAULT_ENCODING, is_cancelled: Callable[[], bool] | None = None
+    data: bytes,
+    *,
+    encoding: str = DEFAULT_ENCODING,
+    is_cancelled: Callable[[], bool] | None = None,
+    progress: ProgressCallback | None = None,
 ) -> CaseFile:
-    """.cas / .caz の中身を読む。``encoding`` はファイル名などの文字コード。読めない場合は ``CatalogError``。"""
-    data = unwrap_compressed(data)
+    """.cas / .caz の中身を読む。``encoding`` はファイル名などの文字コード。読めない場合は ``CatalogError``。
+
+    進捗は ``progress("decompress", 圧縮後のサイズ)`` (圧縮されている場合) と ``progress("parse", 読み取った
+    レコード数)`` で通知する。
+    """
+    data = unwrap_compressed(data, progress=progress)
     reader = _Reader(data)
     header = data[: _CLASS_HEAD.size + len(_CLASS_NAME)]
     if len(header) < _CLASS_HEAD.size or not header.endswith(_CLASS_NAME):
@@ -280,7 +298,7 @@ def parse_case(
         raise CatalogError(tr(_NOT_A_CASE))
     try:
         reader.take(name_length + _HEADER_UNKNOWN)
-        case = _parse_records(reader, schema, encoding, is_cancelled)
+        case = _parse_records(reader, schema, encoding, is_cancelled, progress)
         if reader.pos != len(data):
             raise IndexError(tr('末尾に読み残しがあります'))
         return case
@@ -291,21 +309,30 @@ def parse_case(
         raise CatalogError(message) from error
 
 
-def read_case(path, *, encoding: str = DEFAULT_ENCODING, is_cancelled: Callable[[], bool] | None = None) -> CaseFile:
+def read_case(
+    path,
+    *,
+    encoding: str = DEFAULT_ENCODING,
+    is_cancelled: Callable[[], bool] | None = None,
+    progress: ProgressCallback | None = None,
+) -> CaseFile:
     with open(path, "rb") as stream:
         data = stream.read()
-    return parse_case(data, encoding=encoding, is_cancelled=is_cancelled)
+    return parse_case(data, encoding=encoding, is_cancelled=is_cancelled, progress=progress)
 
 
-def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) -> CaseFile:
+def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled, progress) -> CaseFile:
     data_size = len(reader.data)
     count = 0
 
     def read_record() -> tuple:
         nonlocal count
         count += 1
-        if is_cancelled is not None and count % _CANCEL_CHECK_INTERVAL == 0 and is_cancelled():
-            raise ScanCancelled()
+        if count % _CANCEL_CHECK_INTERVAL == 0:
+            if is_cancelled is not None and is_cancelled():
+                raise ScanCancelled()
+            if progress is not None:
+                progress("parse", count)
         _same, size, kind, archive_type, _atime, mtime, ctime = reader.unpack(_RECORD_HEAD)
         name = reader.string()
         strings = [reader.string() for _ in range(reader.byte())]
@@ -386,6 +413,8 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled) ->
             stack.append(child)
         elif child.is_member:
             reader.unpack(_MEMBER_TAIL)
+    if progress is not None:
+        progress("parse", count)
     return case
 
 

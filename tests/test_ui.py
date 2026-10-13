@@ -617,6 +617,28 @@ def test_import_vcdcase(window, tmp_path, monkeypatch):
     window.import_catalog(str(cas_path))
     assert dialogs[0].outcome is not None and "2 台のドライブを追加しました" in dialogs[0]._status.text()
 
+    # 進捗は 1 行目に全体、2 行目に今の作業を出し、バーはドライブ内の進み具合も反映する (終わったダイアログで通知を再現)
+    dialog = dialogs[0]
+    dialog._on_progress("decompress", 2048)
+    assert dialog._status.text() == "圧縮されたファイルを展開中… (2.00 KB)"
+    dialog._on_progress("parse", 12345)
+    assert dialog._status.text() == "ファイルを読み込み中… 12,345 件"
+    dialog._on_progress("import_total", 2)
+    dialog._on_progress("drive:BACKUP_2003", 1000)
+    assert dialog._status.text() == "ドライブを取り込み中… 1 / 2: BACKUP_2003\nエントリ 1,000 件"
+    dialog._on_progress("build", 500)
+    assert dialog._status.text() == "ドライブを取り込み中… 1 / 2: BACKUP_2003\nデータベースを作成中… 500 / 1,000 件"
+    assert dialog._progress.maximum() == 2000 and 500 < dialog._progress.value() < 1000
+    dialog._on_progress("context", 8)
+    assert dialog._status.text().endswith("\nコメントなどの情報を取り込み中… 8 件")
+    dialog._on_progress("import", 1)
+    assert dialog._status.text() == "ドライブを取り込み中… 1 / 2" and dialog._progress.value() == 1000
+    dialog._on_progress("save", 0)
+    assert dialog._status.text() == "ドライブを取り込み中… 1 / 2\nカタログに保存中…" and dialog._progress.maximum() == 2000
+    dialog._on_progress("import", 2)
+    dialog._on_progress("save", 0)
+    assert dialog._progress.maximum() == 0  # 最後の保存は残り時間が分からないので busy 表示
+
     # 追加されたドライブへ移動している
     assert window.tree_model.rowCount() == 4
     wait_names(window, ["写真", "data.lzh", "memo.txt", "readme.txt", "setup.exe", "tv.avi"])

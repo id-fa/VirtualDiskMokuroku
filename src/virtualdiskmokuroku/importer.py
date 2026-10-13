@@ -83,9 +83,18 @@ def import_catalog(
 ) -> ImportOutcome:
     """他のカタログソフトのファイル (.cas / .caz / .fsr) の全ドライブを ``catalog`` へ新規登録する。形式は中身で判定する。
 
-    進捗は ``progress(phase, count)`` で通知する。phase は ``import_total`` (ドライブ数) / ``import`` (処理済みの
-    ドライブ数) / ``save``。キャンセルすると ``ScanCancelled`` を送出する(ドライブが多い場合は途中で何度か
-    カタログへ書き込むので、それまでに書き込んだドライブは登録されたまま残る)。
+    進捗は ``progress(phase, count)`` で次の順に通知する (スペックの低い PC では各段階に時間がかかるので、
+    画面には今どの作業をしているかを出す):
+
+    - ``decompress`` (圧縮後のサイズ): 圧縮された .cas / .caz を展開している (圧縮されていない場合は来ない)
+    - ``parse`` (読み取ったレコード数): ファイルの中身を読んでいる
+    - ``import_total`` (ドライブ数)
+    - ドライブごとに ``drive:<名前>`` (エントリ数) → ``read`` / ``build`` (DB に入れたエントリ数) →
+      ``context`` (コメントなどを取り込んだエントリ数。無ければ来ない) → ``import`` (処理済みのドライブ数)
+    - ``save`` (0): カタログへ書き込んでいる (ドライブが多い場合は途中でも来る)
+
+    キャンセルすると ``ScanCancelled`` を送出する(ドライブが多い場合は途中で何度かカタログへ書き込むので、
+    それまでに書き込んだドライブは登録されたまま残る)。
 
     暗号化カタログでは DB をメモリ上で作り、平文をディスクに書かない(``pipeline.scan_into_catalog`` と同じ)。
     """
@@ -94,10 +103,10 @@ def import_catalog(
         data = stream.read()
     file_time = datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat(timespec="seconds")
     if stencil.is_stencil(data) or path.suffix.lower() == STENCIL_EXTENSION:
-        record = stencil.parse_stencil(data, is_cancelled=is_cancelled)
+        record = stencil.parse_stencil(data, is_cancelled=is_cancelled, progress=progress)
         specs = [_stencil_spec(root, path.name, file_time) for root in record.roots]
     else:
-        case = vcdcase.parse_case(data, is_cancelled=is_cancelled)
+        case = vcdcase.parse_case(data, is_cancelled=is_cancelled, progress=progress)
         specs = [_vcdcase_spec(drive, path.name, file_time) for drive in case.drives]
     del data
     if not specs:
@@ -119,6 +128,8 @@ def import_catalog(
         nonlocal pending_bytes
         if not pending:
             return
+        if progress:
+            progress("save", 0)
         drives = catalog.add_drives(pending)
         outcome.drives += drives
         for drive in drives:
@@ -134,16 +145,16 @@ def import_catalog(
         for index, spec in enumerate(specs):
             if is_cancelled is not None and is_cancelled():
                 raise ScanCancelled()
-            item, context_count = _build_drive(catalog, spec, work_dir, index, path.name, is_cancelled)
+            if progress:
+                progress(f"drive:{spec.name}", len(spec.entries))
+            item, context_count = _build_drive(catalog, spec, work_dir, index, path.name, progress, is_cancelled)
             pending.append(item)
             pending_bytes += _size(item.database) + _size(item.context_db)
             outcome.context_count += context_count
-            if pending_bytes >= _FLUSH_BYTES:
-                flush()
             if progress:
                 progress("import", index + 1)
-        if progress:
-            progress("save", 0)
+            if pending_bytes >= _FLUSH_BYTES:
+                flush()
         flush()
         return outcome
     finally:
@@ -289,19 +300,23 @@ def _fill_stencil(entry: stencil.StencilEntry, icons: list[bytes], writer) -> No
 
 
 def _build_drive(
-    catalog: Catalog, spec: _DriveSpec, work_dir: Path | None, index: int, source_name: str, is_cancelled
+    catalog: Catalog, spec: _DriveSpec, work_dir: Path | None, index: int, source_name: str, progress, is_cancelled
 ) -> tuple[NewDrive, int]:
     database: Path | bytes
     if work_dir is None:
         database, stats = build_drive_db_in_memory(
             spec.root, spec.entries, memory_limit=catalog.memory_limit, spill_dir=catalog.session_dir,
-            meta=spec.meta, is_cancelled=is_cancelled,
+            meta=spec.meta, progress=progress, is_cancelled=is_cancelled,
         )  # fmt: skip
     else:
         database = work_dir / f"{index}-{FILES_DB}"
-        stats = build_drive_db(database, spec.root, spec.entries, meta=spec.meta, is_cancelled=is_cancelled)
+        stats = build_drive_db(
+            database, spec.root, spec.entries, meta=spec.meta, progress=progress, is_cancelled=is_cancelled
+        )
     try:
-        context_db, context_count = _build_context_db(catalog, spec, database, work_dir, index, source_name)
+        context_db, context_count = _build_context_db(
+            catalog, spec, database, work_dir, index, source_name, progress, is_cancelled
+        )
     except BaseException:
         if isinstance(database, Path):
             remove_quietly(database)
@@ -312,9 +327,19 @@ def _build_drive(
 
 
 def _build_context_db(
-    catalog: Catalog, spec: _DriveSpec, files_db: Path | bytes, work_dir: Path | None, index: int, source_name: str
+    catalog: Catalog,
+    spec: _DriveSpec,
+    files_db: Path | bytes,
+    work_dir: Path | None,
+    index: int,
+    source_name: str,
+    progress: ProgressCallback | None,
+    is_cancelled: Callable[[], bool] | None,
 ) -> tuple[Path | bytes | None, int]:
-    """コメントなどを持つエントリがあれば context.db を作る。戻り値は (DB, 取り込んだエントリ数)。"""
+    """コメントなどを持つエントリがあれば context.db を作る。戻り値は (DB, 取り込んだエントリ数)。
+
+    進捗は ``progress("context", 取り込んだエントリ数)`` で通知する (サムネイルの変換などで時間がかかる)。
+    """
     wanted = spec.context
     if not wanted:
         return None, 0
@@ -357,6 +382,12 @@ def _build_context_db(
                 work.conn.execute("COMMIT")
                 work.checkpoint()  # メモリ上で大きくなりすぎたら一時ファイルへ退避 (接続が入れ替わる)
                 work.conn.execute("BEGIN")
+                if is_cancelled is not None and is_cancelled():
+                    raise ScanCancelled()
+                if progress:
+                    progress("context", count)
+        if progress:
+            progress("context", count)
         meta = {
             "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "kinds": [spec.source],

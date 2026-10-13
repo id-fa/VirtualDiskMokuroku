@@ -263,6 +263,13 @@ STRINGS: dict[str, str] = {
     "インポートに失敗しました: {message}": "Import failed: {message}",
     "インポートに失敗しました。\n\n{message}": "Import failed.\n\n{message}",
     "ドライブを取り込み中… {count:,} / {_total:,}": "Importing drives… {count:,} / {_total:,}",
+    "圧縮されたファイルを展開中… ({size})": "Decompressing the file… ({size})",
+    "ファイルを読み込み中… {count:,} 件": "Reading the file… {count:,} records",
+    "ドライブを取り込み中… {current:,} / {total:,}: {name}": "Importing drives… {current:,} / {total:,}: {name}",
+    "エントリ {count:,} 件": "{count:,} entries",
+    "ファイルリストを準備中… {count:,} / {total:,} 件": "Preparing the file list… {count:,} / {total:,}",
+    "データベースを作成中… {count:,} / {total:,} 件": "Building the database… {count:,} / {total:,}",
+    "コメントなどの情報を取り込み中… {count:,} 件": "Importing comments and other details… {count:,}",
     # ------------------------------------------------------------------ メインウィンドウ
     "フィルタ (入力するとすぐに絞り込み。空白区切りで AND 条件)": "Filter (applies as you type; space-separated terms are ANDed)",
     "このフォルダ": "This folder",

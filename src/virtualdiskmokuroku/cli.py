@@ -61,18 +61,9 @@ def cmd_scan(args: argparse.Namespace) -> int:
         if matches:
             drive_id = matches[0]["id"]
 
-    last_report = 0.0
-
-    def progress(phase: str, count: int) -> None:
-        nonlocal last_report
-        now = time.monotonic()
-        if phase.startswith("source:") or now - last_report > 1.0:
-            last_report = now
-            print(f"  {phase} {count:,}" if count else f"  {phase}", file=sys.stderr)
-
     started = time.monotonic()
     outcome = scan_into_catalog(
-        catalog, args.root, drive_id=drive_id, name=args.name, source=args.source, es=es, progress=progress
+        catalog, args.root, drive_id=drive_id, name=args.name, source=args.source, es=es, progress=_progress_printer()
     )
     seconds = time.monotonic() - started
     result = outcome.result
@@ -89,9 +80,23 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _progress_printer():
+    """進捗を標準エラーへ出す関数を返す。段階の切り替わり以外は 1 秒に 1 回に抑える。"""
+    last_report = 0.0
+
+    def progress(phase: str, count: int) -> None:
+        nonlocal last_report
+        now = time.monotonic()
+        if phase.startswith(("source:", "drive:")) or now - last_report > 1.0:
+            last_report = now
+            print(f"  {phase} {count:,}" if count else f"  {phase}", file=sys.stderr)
+
+    return progress
+
+
 def cmd_import(args: argparse.Namespace) -> int:
     catalog = _open_catalog(args.catalog, args.password, create=True, encrypt=args.encrypt)
-    outcome = import_vcdcase(catalog, args.source)
+    outcome = import_vcdcase(catalog, args.source, progress=_progress_printer())
     for drive in outcome.drives:
         print(
             tr('追加: {name}  ファイル {file_count:,} / フォルダ {dir_count:,} / 合計 {total_size}').format(name=drive['name'], file_count=drive['file_count'], dir_count=drive['dir_count'], total_size=format_size(drive['total_size']))
