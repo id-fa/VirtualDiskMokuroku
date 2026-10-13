@@ -374,3 +374,76 @@ def test_reorganize_and_copy_drives(tmp_path, scanned):
     with pytest.raises(CatalogError):
         reopened.copy_drives_to(Catalog.open(reopened.path, cache_root=cache), [a])
     assert [drive["name"] for drive in Catalog.open(reopened.path, cache_root=cache).drives] == ["d", "b", "a"]
+
+
+def test_deferred_save_commit_and_discard(tmp_path, scanned):
+    _tree, _files, db_path, result = scanned
+    catalog_path = tmp_path / "test.vdmoku"
+    cache = tmp_path / "cache"
+    catalog = Catalog.create(catalog_path, cache_root=cache)
+    catalog.deferred = True
+    assert not catalog.modified and catalog.work_path == tmp_path / "test.vdmoku.editing"
+
+    # 変更は作業用コピーに書かれ、本体は変わらない。読む側は変更後の内容を見る
+    before = catalog_path.read_bytes()
+    drive = catalog.put_drive(db_path, result, name="A")
+    assert catalog.modified and catalog.work_path.exists() and catalog_path.read_bytes() == before
+    assert Catalog.open(catalog_path, cache_root=cache).drives == []
+    with catalog.open_drive_db(drive["id"]) as db:
+        assert len(db.subtree(ROOT_ID)) == drive["file_count"] + drive["dir_count"]
+    assert catalog.storage_sizes()[drive["id"]][0] > 0
+
+    # 破棄 → 作業用コピーが消え、manifest も本体の内容に戻る
+    catalog.discard()
+    assert not catalog.modified and not catalog.work_path.exists() and catalog.drives == []
+    with pytest.raises(CatalogError):
+        catalog.open_drive_db(drive["id"])
+
+    # 保存 → 本体が差し替わる。その後の変更も保留される
+    drive = catalog.put_drive(db_path, result, name="B")
+    catalog.commit()
+    assert not catalog.modified and not catalog.work_path.exists()
+    reopened = Catalog.open(catalog_path, cache_root=cache)
+    assert [item["name"] for item in reopened.drives] == ["B"]
+    reopened.deferred = True
+    reopened.drives[0]["name"] = "C"
+    reopened.save()
+    assert reopened.modified
+    reopened.put_drive(db_path, result, drive_id=drive["id"])
+    assert len(reopened.drives[0]["backups"]) == 1
+    reopened.discard()
+    assert reopened.drives[0]["name"] == "B" and reopened.drives[0]["backups"] == []
+    assert Catalog.open(catalog_path, cache_root=cache).drives[0]["name"] == "B"
+
+    # 失敗した書き換えは作業用コピーも壊さない
+    reopened.drives[0]["name"] = "D"
+    reopened.save()
+    work_before = reopened.work_path.read_bytes()
+    with pytest.raises(OSError):
+        reopened.put_drive(tmp_path / "missing.db", result, drive_id=drive["id"])
+    assert reopened.work_path.read_bytes() == work_before
+    assert not os.path.exists(str(reopened.work_path) + ".tmp")
+
+
+def test_deferred_encryption_is_reverted_by_discard(tmp_path, scanned):
+    pytest.importorskip("cryptography")
+    _tree, _files, db_path, result = scanned
+    catalog_path = tmp_path / "test.vdmoku"
+    cache = tmp_path / "cache"
+    catalog = Catalog.create(catalog_path, cache_root=cache)
+    catalog.put_drive(db_path, result, name="A")
+    catalog.deferred = True
+
+    catalog.encrypt("合言葉")
+    assert catalog.encrypted and catalog.modified and Catalog.is_encrypted_file(catalog.work_path)
+    assert not Catalog.is_encrypted_file(catalog_path)
+    catalog.discard()
+    assert not catalog.encrypted and not Catalog.is_encrypted_file(catalog_path)
+    assert catalog.drives[0]["name"] == "A"
+    with catalog.open_drive_db(catalog.drives[0]["id"]) as db:
+        assert len(db.subtree(ROOT_ID)) > 0
+
+    catalog.encrypt("合言葉")
+    catalog.commit()
+    assert Catalog.is_encrypted_file(catalog_path) and not catalog.work_path.exists()
+    assert Catalog.open(catalog_path, "合言葉", cache_root=cache).drives[0]["name"] == "A"

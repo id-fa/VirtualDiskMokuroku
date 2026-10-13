@@ -311,6 +311,8 @@ class MainWindow(QMainWindow):
         self.act_new = action(tr('新しいカタログ(&N)…'), self.new_catalog, QKeySequence.StandardKey.New)
         self.act_open = action(tr('カタログを開く(&O)…'), self.open_catalog_dialog, QKeySequence.StandardKey.Open)
         self.act_close = action(tr('カタログを閉じる(&C)'), self.close_catalog)
+        self.act_save = action(tr('カタログを保存(&S)'), self.save_catalog, QKeySequence.StandardKey.Save)
+        self.act_discard = action(tr('変更を破棄して読み直す(&V)'), self.discard_changes)
         self.act_exit = action(tr('終了(&X)'), self.close)
         self.act_import = action(tr('他のソフトのカタログをインポート(&I)…'), self.import_catalog)
         self.act_export = action(tr('表示中の一覧をエクスポート(&E)…'), self.export_rows, "Ctrl+E")
@@ -349,6 +351,9 @@ class MainWindow(QMainWindow):
         self.recent_menu = file_menu.addMenu(tr('最近使ったカタログ(&R)'))
         self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
         file_menu.addAction(self.act_close)
+        file_menu.addSeparator()
+        file_menu.addAction(self.act_save)
+        file_menu.addAction(self.act_discard)
         file_menu.addSeparator()
         file_menu.addAction(self.act_import)
         file_menu.addAction(self.act_export)
@@ -421,6 +426,9 @@ class MainWindow(QMainWindow):
             self.splitter.restoreState(splitter)
 
     def closeEvent(self, event: QCloseEvent) -> None:
+        if not self._confirm_unsaved():
+            event.ignore()
+            return
         state = QSettings(APP_NAME, APP_NAME)
         state.setValue("geometry", self.saveGeometry())
         state.setValue("windowState", self.saveState())
@@ -454,11 +462,18 @@ class MainWindow(QMainWindow):
         self.act_forward.setEnabled(self._history_index < len(self._history) - 1)
         self.act_up.setEnabled(has_drive and self._location[1] != ROOT_ID)  # type: ignore[index]
         self.act_export_decrypted.setEnabled(has_catalog and self.catalog.encrypted)  # type: ignore[union-attr]
+        modified = has_catalog and self.catalog.modified  # type: ignore[union-attr]
+        self.act_save.setEnabled(bool(modified))
+        self.act_discard.setEnabled(bool(modified))
         title = f"{APP_NAME} {__version__}"
-        if self.catalog is not None and self.catalog.encrypted:
-            title = tr('{name} [暗号化] - {title}').format(name=self.catalog.path.name, title=title)
-        elif self.catalog is not None:
-            title = f"{self.catalog.path.name} - {title}"
+        if self.catalog is not None:
+            name = self.catalog.path.name
+            if modified:
+                name = tr('{name} [未保存]').format(name=name)
+            if self.catalog.encrypted:
+                title = tr('{name} [暗号化] - {title}').format(name=name, title=title)
+            else:
+                title = f"{name} - {title}"
         self.setWindowTitle(title)
         self._apply_view_mode()
 
@@ -547,6 +562,8 @@ class MainWindow(QMainWindow):
 
     # ================================================================== カタログの開閉
     def new_catalog(self) -> None:
+        if not self._confirm_unsaved():
+            return
         path, _filter = QFileDialog.getSaveFileName(self, tr('新しいカタログ'), "", tr(_CATALOG_FILTER).format(ext=CATALOG_EXTENSION))
         if not path:
             return
@@ -587,6 +604,8 @@ class MainWindow(QMainWindow):
             self.open_catalog(path)
 
     def open_catalog(self, path: str | os.PathLike[str]) -> bool:
+        if not self._confirm_unsaved():
+            return False
         try:
             password = None
             if Catalog.is_password_protected(path):
@@ -612,6 +631,7 @@ class MainWindow(QMainWindow):
         self.catalog = catalog
         if catalog is not None:
             catalog.memory_limit = self.app_settings.memory_limit_mb * 1024 * 1024
+            catalog.deferred = not self.app_settings.auto_save
         self._location = None
         self._history.clear()
         self._history_index = -1
@@ -632,7 +652,60 @@ class MainWindow(QMainWindow):
         self._update_ui_state()
 
     def close_catalog(self) -> None:
-        self._set_catalog(None)
+        if self._confirm_unsaved():
+            self._set_catalog(None)
+
+    # ================================================================== 保存・破棄 (自動保存オフのとき)
+    def _confirm_unsaved(self) -> bool:
+        """保存していない変更があれば、保存するか破棄するか尋ねる。続けてよければ True (キャンセルなら False)。"""
+        if self.catalog is None or not self.catalog.modified:
+            return True
+        box = QMessageBox(
+            QMessageBox.Icon.Question, APP_NAME,
+            tr('{name} への変更をまだ保存していません。保存しますか?').format(name=self.catalog.path.name),
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            self,
+        )  # fmt: skip
+        box.setDefaultButton(QMessageBox.StandardButton.Save)
+        answer = box.exec()
+        if answer == QMessageBox.StandardButton.Save:
+            return self.save_catalog()
+        if answer == QMessageBox.StandardButton.Discard:
+            self._discard_and_reload()
+            return True
+        return False
+
+    def save_catalog(self) -> bool:
+        """保留中の変更をカタログ本体に書き込む。"""
+        if self.catalog is None or not self.catalog.modified:
+            return True
+        try:
+            with wait_cursor():
+                self.catalog.commit()
+        except OSError as error:
+            QMessageBox.critical(self, APP_NAME, tr('カタログを保存できません。\n\n{error}').format(error=error))
+            return False
+        self.statusBar().showMessage(tr('{path} に保存しました').format(path=self.catalog.path), 5000)
+        self._update_ui_state()
+        return True
+
+    def discard_changes(self) -> None:
+        """保留中の変更を捨てて、最後に保存した状態を読み直す。"""
+        if self.catalog is None or not self.catalog.modified:
+            return
+        answer = QMessageBox.question(
+            self, APP_NAME,
+            tr('保存していない変更を破棄して、カタログを最後に保存した状態に戻しますか?'),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+        )  # fmt: skip
+        if answer == QMessageBox.StandardButton.Yes:
+            self._discard_and_reload()
+
+    def _discard_and_reload(self) -> None:
+        assert self.catalog is not None
+        self._close_databases()
+        self.catalog.discard()
+        self._after_catalog_changed()
 
     def _fill_recent_menu(self) -> None:
         self.recent_menu.clear()
@@ -1471,6 +1544,9 @@ class MainWindow(QMainWindow):
         if AppSettingsDialog(self.app_settings, self).exec():
             if self.catalog is not None:
                 self.catalog.memory_limit = self.app_settings.memory_limit_mb * 1024 * 1024
+                self.catalog.deferred = not self.app_settings.auto_save
+                if self.app_settings.auto_save:
+                    self.save_catalog()  # 自動保存に切り替えたら、保留していた変更をいま書き込む
             self._run_query()
 
     def everything_help_box(self) -> QMessageBox:

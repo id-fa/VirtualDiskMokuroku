@@ -386,6 +386,13 @@ class AppSettingsDialog(QDialog):
         )
         form.addRow(tr('暗号化カタログをメモリで開く上限:'), self._memory_limit)
 
+        self._auto_save = QCheckBox(tr('変更をすぐにカタログに保存する (自動保存)'))
+        self._auto_save.setChecked(app_settings.auto_save)
+        self._auto_save.setToolTip(
+            tr('オフのときは、ドライブの追加・更新などの変更をカタログと同じフォルダの作業用コピー (.editing) に書き、\n「ファイル」→「カタログを保存」(Ctrl+S) で本体に反映します。閉じるときに保存するか破棄するか選べます。')
+        )  # fmt: skip
+        form.addRow(tr('カタログの保存:'), self._auto_save)
+
         self._language = QComboBox()
         for value, text in (
             (LANGUAGE_AUTO, tr('自動 (OS の表示言語が日本語なら日本語、それ以外は英語)')),
@@ -434,6 +441,7 @@ class AppSettingsDialog(QDialog):
         self._settings.es_instance = self._instance.text().strip()
         self._settings.result_limit = self._limit.value()
         self._settings.memory_limit_mb = self._memory_limit.value()
+        self._settings.auto_save = self._auto_save.isChecked()
         self._settings.language = self._language.currentData()
         self._settings.save()
         super().accept()

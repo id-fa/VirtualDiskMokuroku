@@ -50,6 +50,8 @@ def window(app, tmp_path, monkeypatch):
     main.show()
     assert main.open_catalog(catalog.path)
     yield main
+    if main.catalog is not None and main.catalog.modified:
+        main._discard_and_reload()  # 終了時の「保存しますか?」で止まらないように
     main.close()
 
 
@@ -189,6 +191,8 @@ def test_context_scan_search_and_redecode(window, tmp_path):
     entry_id = window.table_model.rows[0].entry.id
     window._redecode_text(drive["id"], entry_id, "latin-1")
     assert wait_until(lambda: names(window) == [] or window.properties._text.toPlainText() != "これは秘密のメモです")
+    assert catalog.modified and "[未保存]" in window.windowTitle()  # 自動保存オフ: ここまでの変更は作業用コピーにある
+    assert window.save_catalog() and not catalog.modified and not catalog.work_path.exists()
     reopened = Catalog.open(catalog.path)
     from virtualdiskmokuroku.context.context_db import ContextDB
 
@@ -242,6 +246,7 @@ def test_cancel_during_context_registers_partial_results(window, tmp_path):
     drive, stats = run(None, cancel_at=60)
     assert stats.cancelled and 60 <= stats.processed < 200
     assert drive["has_context"] and drive["context_partial"] and drive["file_count"] == 200
+    assert window.save_catalog()
     with ContextDB(Catalog.open(catalog.path).extract_context_db(drive["id"])) as context:
         assert context.summary() == {"text": stats.processed}
 
@@ -458,8 +463,9 @@ def test_encrypted_catalog_leaves_no_plaintext_on_disk(window, tmp_path, monkeyp
     assert wait_until(lambda: len(names(window)) == 6)
     assert plaintext_left() == []
 
-    # --- カタログのどこにも平文は無い
-    raw = catalog.path.read_bytes()
+    # --- カタログのどこにも平文は無い (保留中の作業用コピーも暗号化されている)
+    raw = catalog.work_path.read_bytes() + catalog.path.read_bytes()
+    assert catalog.modified
     for needle in (sqlite_magic, "極秘メモ".encode("utf-8"), "秘密".encode("utf-8"), b"photo_3.png", b"\xff\xd8\xff\xe0"):
         assert needle not in raw
 
@@ -467,6 +473,7 @@ def test_encrypted_catalog_leaves_no_plaintext_on_disk(window, tmp_path, monkeyp
     dialog = CatalogSettingsDialog(catalog, window, prepare_rewrite=window._close_databases)
     assert not dialog._change_key_button.isHidden() and dialog._encrypt_button.isHidden()
     assert dialog._rewrite_catalog(lambda: catalog.set_password("新しい合言葉"), "失敗")
+    assert window.save_catalog() and plaintext_left() == []
     with pytest.raises(Exception):
         CatalogClass.open(catalog.path, "合言葉")
     reopened = CatalogClass.open(catalog.path, "新しい合言葉")
@@ -707,6 +714,7 @@ def test_drive_groups(window, monkeypatch):
     assert "group" not in window.catalog.drive(two)
     assert [window.tree_model.item(row).data(ROLE_GROUP) for row in range(window.tree_model.rowCount())] == ["保管", None]
     path = window.catalog.path
+    assert window.save_catalog()
     assert window.open_catalog(path)
     assert [window.tree_model.item(row).data(ROLE_GROUP) for row in range(window.tree_model.rowCount())] == ["保管", None]
     assert window.tree_model.item(0).child(0).data(ROLE_DRIVE) == one
@@ -918,6 +926,7 @@ def test_organize_dialog(window, tmp_path, monkeypatch):
     assert "1 台のドライブを削除" in dialog.summary.text() and "拡張コンテキスト" in dialog.summary.text()
     dialog.accept()
     assert dialog.changed and dialog.reload_needed
+    assert window.save_catalog()
     reopened = Catalog.open(catalog.path)
     assert [(drive["id"], drive.get("group")) for drive in reopened.drives] == [(two, "保管"), (three, "保管")]
     assert not reopened.drive(three)["has_context"] and reopened.extract_context_db(three) is None
@@ -944,3 +953,49 @@ def test_organize_dialog(window, tmp_path, monkeypatch):
     assert window.tree_model.rowCount() == 2 and window.tree_model.item(1).data(MAIN_ROLE_GROUP) == "保管"
     assert window._current_drive()["id"] == two
     assert wait_until(lambda: "only_in_two.txt" in names(window))
+
+
+def test_deferred_save_prompts_on_close(window, tmp_path, monkeypatch):
+    """自動保存オフ: 変更は作業用コピーに書かれ、保存 / 破棄 / 終了時の確認で本体に反映するか決める。"""
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    catalog = window.catalog
+    path = catalog.path
+    before = path.read_bytes()
+    assert not window.act_save.isEnabled() and catalog.deferred
+
+    # ドライブの表示名を変える → 本体は変わらず、作業用コピーができる
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("名前A", True))
+    window.rename_current_drive()
+    assert catalog.modified and catalog.work_path.exists() and path.read_bytes() == before
+    assert window.act_save.isEnabled() and window.act_discard.isEnabled() and "[未保存]" in window.windowTitle()
+    assert Catalog.open(path).drives[0]["name"] == "ドライブone"
+
+    # 破棄 → 読み直されて元の名前に戻る
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
+    window.discard_changes()
+    assert not catalog.modified and not catalog.work_path.exists()
+    assert catalog.drives[0]["name"] == "ドライブone" and "[未保存]" not in window.windowTitle()
+    assert wait_until(lambda: window.tree_model.item(0).text().startswith("ドライブone"))
+
+    # もう一度変えて、終了時の確認で「保存」を選ぶ → 本体に書かれる
+    window.rename_current_drive()
+    assert catalog.modified
+    answers = [QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Save]
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: answers.pop(0))
+    window.close_catalog()  # キャンセル → 開いたまま
+    assert window.catalog is catalog and catalog.modified
+    window.close_catalog()  # 保存 → 本体に反映して閉じる
+    assert window.catalog is None and not catalog.work_path.exists()
+    assert Catalog.open(path).drives[0]["name"] == "名前A"
+
+    # 自動保存オン: その場で本体に書かれ、確認は出ない
+    window.app_settings.auto_save = True
+    assert window.open_catalog(path)
+    assert not window.catalog.deferred
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("名前B", True))
+    window.rename_current_drive()
+    assert not window.catalog.modified and Catalog.open(path).drives[0]["name"] == "名前B"
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: pytest.fail("確認は出ないはず"))
+    window.close_catalog()
+    assert window.catalog is None

@@ -9,6 +9,9 @@
 
 更新は常に一時ファイルへ書き出してから ``os.replace`` で差し替えるので、途中で失敗しても元のカタログは壊れない。
 
+``deferred`` を立てると、変更はカタログ本体ではなく同じフォルダの作業用コピー (``<名前>.vdmoku.editing``) に書き、
+``commit()`` で本体に差し替えるか ``discard()`` で捨てるまで本体は変わらない (GUI の「自動保存」オフの動作)。
+
 暗号化カタログ (形式バージョン 2) では、manifest.json には形式と鍵の記録だけを平文で置き、本来の manifest は
 ``manifest.enc`` に、各 DB は同じメンバー名のまま ``core.crypto`` の形式で暗号化して無圧縮で格納する。
 
@@ -62,6 +65,7 @@ CONTEXT_DB = "context.db"
 _SCRYPT_PARAMS = {"n": 1 << 14, "r": 8, "p": 1}
 _COPY_CHUNK = 1 << 20
 _SESSION_PREFIX = "session-"
+WORK_SUFFIX = ".editing"  # 保存を保留しているときの作業用コピー (カタログと同じフォルダに作る)
 
 # ドライブ 1 世代分の要約として manifest に持つ項目(バックアップ世代にも同じ項目を持たせる)
 _SNAPSHOT_KEYS = (
@@ -229,6 +233,9 @@ class Catalog:
         self._sources: dict[str, _Source] = {}
         self._session_dir: Path | None = None
         self._lock = threading.RLock()
+        self.deferred = False  # True なら変更を作業用コピーに書き、commit() するまで本体に反映しない
+        self._file = self.path  # 実際に読み書きしているファイル (保留中の変更があれば作業用コピー)
+        self._pristine = self._snapshot()  # 本体の内容に対応する manifest と鍵 (discard() で戻す)
 
     # ------------------------------------------------------------------ 生成・オープン
     @classmethod
@@ -384,6 +391,49 @@ class Catalog:
         sub_path = scan_sub.strip("\\")
         return root + sub_path if sub_path else root
 
+    # ------------------------------------------------------------------ 保存の保留 (作業用コピー)
+    @property
+    def work_path(self) -> Path:
+        """保存を保留しているときに変更を書く作業用コピー (カタログと同じフォルダ。差し替えが原子的に済む)。"""
+        return self.path.with_name(self.path.name + WORK_SUFFIX)
+
+    @property
+    def modified(self) -> bool:
+        """作業用コピーにだけ書いてあり、まだカタログ本体に保存していない変更があるか。"""
+        return self._file != self.path
+
+    def _snapshot(self) -> tuple[dict, bytes | None, dict | None]:
+        return copy.deepcopy(self.manifest), self._data_key, self._key_record
+
+    def _write_target(self) -> Path:
+        """次の書き換えの書き込み先。保留中 (または保留する設定) なら作業用コピー、そうでなければカタログ本体。"""
+        return self.work_path if self.deferred or self.modified else self.path
+
+    def _after_write(self) -> None:
+        """書き換えが済んだあとの記録。本体に書いたときは、discard() で戻す先をいまの内容にする。"""
+        if not self.modified:
+            self._pristine = self._snapshot()
+
+    def commit(self) -> None:
+        """保留中の変更をカタログ本体に書き込む (作業用コピーで本体を差し替える)。"""
+        with self._lock:
+            if not self.modified:
+                return
+            os.replace(self._file, self.path)
+            self._file = self.path
+            self._after_write()
+
+    def discard(self) -> None:
+        """保留中の変更を捨てて、カタログ本体の内容に戻す。先に DB への接続を閉じておくこと。"""
+        with self._lock:
+            if not self.modified:
+                return
+            self.release_sources()
+            remove_quietly(self._file)
+            self._file = self.path
+            manifest, self._data_key, self._key_record = self._pristine
+            self.manifest = copy.deepcopy(manifest)
+
     # ------------------------------------------------------------------ 設定・パスワード・暗号化
     def save(self) -> None:
         """manifest(設定やドライブ名の変更)を書き戻す。"""
@@ -419,11 +469,14 @@ class Catalog:
         self.settings["password"] = None  # 照合用の記録は不要になる
         try:
             with self._lock:
-                self._write_converted(self.path, data_key, key_record)
+                target = self._write_target()
+                self._write_converted(target, data_key, key_record)
+                self._file = target
+                self._data_key, self._key_record = data_key, key_record
+                self._after_write()
         except BaseException:
             self.settings["password"] = previous
             raise
-        self._data_key, self._key_record = data_key, key_record
         self.release_sources()
         shutil.rmtree(self.cache_dir, ignore_errors=True)
 
@@ -432,17 +485,20 @@ class Catalog:
         if not self.encrypted:
             raise CatalogError(tr('このカタログは暗号化されていません'))
         with self._lock:
-            self._write_converted(self.path, None, None)
-        self._data_key = self._key_record = None
+            target = self._write_target()
+            self._write_converted(target, None, None)
+            self._file = target
+            self._data_key = self._key_record = None
+            self._after_write()
         self.release_sources()
 
     def export_decrypted(self, target: str | os.PathLike[str]) -> None:
         """暗号化カタログの内容を、通常のカタログとして別のファイルに書き出す(元のカタログは変えない)。"""
         target = Path(target)
-        if target.resolve() == self.path.resolve():
+        if target.resolve() in (self.path.resolve(), self.work_path.resolve()):
             raise CatalogError(tr('書き出し先に元のカタログと同じファイルは指定できません'))
         if not self.encrypted:
-            shutil.copyfile(self.path, target)
+            shutil.copyfile(self._file, target)
             return
         with self._lock:
             self._write_converted(target, None, None)
@@ -470,7 +526,7 @@ class Catalog:
         return self.cache_dir / f"{stem}.{info.CRC:08x}-{info.file_size:x}{dot}{suffix}"
 
     def has_member(self, drive_id: str, name: str, backup: str | None = None) -> bool:
-        with self._lock, zipfile.ZipFile(self.path) as archive:
+        with self._lock, zipfile.ZipFile(self._file) as archive:
             return self._member(drive_id, name, backup) in archive.NameToInfo
 
     def storage_sizes(self) -> dict[str, tuple[int, int]]:
@@ -479,7 +535,7 @@ class Catalog:
         戻り値は drive_id → (現行世代の files.db + context.db, バックアップ世代の合計)。
         """
         sizes: dict[str, list[int]] = {}
-        with self._lock, zipfile.ZipFile(self.path) as archive:
+        with self._lock, zipfile.ZipFile(self._file) as archive:
             for info in archive.infolist():
                 parts = info.filename.split("/")  # drives/<drive_id>/[backup/<stamp>/]<name>
                 if len(parts) < 3 or parts[0] != "drives":
@@ -493,7 +549,7 @@ class Catalog:
         if self.encrypted:
             raise CatalogError(tr('暗号化カタログの DB はディスクに展開しません (db_source を使ってください)'))
         member = self._member(drive_id, name, backup)
-        with self._lock, zipfile.ZipFile(self.path) as archive:
+        with self._lock, zipfile.ZipFile(self._file) as archive:
             try:
                 info = archive.getinfo(member)
             except KeyError:
@@ -544,7 +600,7 @@ class Catalog:
     def read_db_bytes(self, drive_id: str, name: str = FILES_DB, backup: str | None = None) -> bytes:
         """カタログ内の DB の中身(平文)をバイト列で返す。"""
         member = self._member(drive_id, name, backup)
-        with self._lock, zipfile.ZipFile(self.path) as archive:
+        with self._lock, zipfile.ZipFile(self._file) as archive:
             try:
                 info = archive.getinfo(member)
             except KeyError:
@@ -558,7 +614,7 @@ class Catalog:
                 return buffer.getvalue()
 
     def _load_encrypted(self, member: str) -> _Source:
-        with zipfile.ZipFile(self.path) as archive:
+        with zipfile.ZipFile(self._file) as archive:
             try:
                 info = archive.getinfo(member)
             except KeyError:
@@ -918,7 +974,7 @@ class Catalog:
         """
         if target is self or target.path.resolve() == self.path.resolve():
             raise CatalogError(tr('同じカタログにはコピーできません'))
-        with self._lock, zipfile.ZipFile(self.path) as archive:
+        with self._lock, zipfile.ZipFile(self._file) as archive:
             members = set(archive.namelist())
         taken = {drive["id"] for drive in target.drives}
         add: dict[str, Path | bytes | MemberCopy] = {}
@@ -1009,7 +1065,7 @@ class Catalog:
         """別のカタログのメンバーを ``name`` として写す。どちらも暗号化されていなければ再圧縮せずに写し、
         そうでなければ復号して (必要ならこのカタログの鍵で暗号化し直して) 書く。平文は一時ファイルに残さない。"""
         origin = source.catalog
-        with origin._lock, zipfile.ZipFile(origin.path) as zin:
+        with origin._lock, zipfile.ZipFile(origin._file) as zin:
             try:
                 info = zin.getinfo(source.member)
             except KeyError:
@@ -1057,13 +1113,14 @@ class Catalog:
         rename = rename or {}
         delete_prefixes = tuple(delete_prefixes)
         self.manifest["updated_at"] = _now()
-        temp_path = self.path.with_name(self.path.name + ".tmp")
         with self._lock:
+            target = self._write_target()
+            temp_path = target.with_name(target.name + ".tmp")
             try:
                 with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zout:
                     self._write_manifest(zout, self._data_key, self._key_record)
-                    if self.path.exists():
-                        with zipfile.ZipFile(self.path) as zin:
+                    if self._file.exists():
+                        with zipfile.ZipFile(self._file) as zin:
                             for info in zin.infolist():
                                 name = info.filename
                                 if name in (MANIFEST_NAME, MANIFEST_ENC):
@@ -1076,7 +1133,9 @@ class Catalog:
                                     _copy_member_raw(zin, zout, info, name)
                     for name, source in add.items():
                         self._add_member(zout, name, source, self._data_key)
-                os.replace(temp_path, self.path)
+                os.replace(temp_path, target)
+                self._file = target
+                self._after_write()
             except BaseException:
                 remove_quietly(temp_path)
                 raise
@@ -1087,7 +1146,7 @@ class Catalog:
             raise CatalogError(tr('暗号化の状態が変わらない変換はできません'))
         temp_path = target.with_name(target.name + ".tmp")
         try:
-            with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zout, zipfile.ZipFile(self.path) as zin:
+            with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zout, zipfile.ZipFile(self._file) as zin:
                 self._write_manifest(zout, new_key, new_record)
                 for info in zin.infolist():
                     name = info.filename

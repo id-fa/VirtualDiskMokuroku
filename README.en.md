@@ -29,6 +29,8 @@ After `pip install -e .`, the `virtualdiskmokuroku` command starts it as well.
 1. File → New catalog creates a catalog file (`.vdmoku`)
 2. Drive → Add / update drive selects a drive and scans it
 3. From then on you can browse its contents in the tree and the list even with the drive disconnected
+4. Changes such as adding or updating drives are written to the catalog with File → Save catalog (Ctrl+S)
+   (you are asked whether to save or discard them when closing)
 
 | Feature | How |
 |---|---|
@@ -44,6 +46,7 @@ After `pip install -e .`, the `virtualdiskmokuroku` command starts it as well.
 | Organize drives | Drive → Organize drives. Reorder drives and move them between groups by drag & drop (or "Up / Down"), delete several drives at once, or remove only the extended context (thumbnails, text content, etc.). Order, group changes and deletions are written to the catalog together when you press OK |
 | Copy drives to another catalog | Select drives in "Organize drives" and press "Copy to another catalog". Choosing an existing catalog adds them to it; a new file name creates a new catalog (works across encrypted and unencrypted catalogs; backups are not copied) |
 | Backups | Keeps the previous database inside the catalog when a drive is updated (1 generation by default). Drive → Restore from backup |
+| Saving / discarding changes | Changes are written to a working copy (`<name>.vdmoku.editing`) in the catalog's folder and applied to the catalog with File → Save catalog (Ctrl+S). "Revert unsaved changes" returns to the last saved state. When closing or opening another catalog, you are asked whether to save or discard. Turn on "Save changes to the catalog immediately (auto-save)" in Settings → Application settings to write every change to the catalog right away |
 | Catalog encryption | Choose it when creating a catalog, or Settings → Catalog settings → Encryption / password |
 | Ignore list, extended context | Settings → Catalog settings (stored per catalog) |
 | Migration from Virtual CD-ROM Case (alpha) | File → Import catalog from another application and choose a `.cas` file (saved without compression; see [details](#importing-virtual-cd-rom-case-catalogs-alpha)) |
@@ -213,6 +216,8 @@ drives/<id>/backup/<timestamp>/...        Previous generations
 `.pmcat` files created under the former name PyMediaCatalogue can still be opened.
 
 While browsing, only the databases that are needed are extracted to `%LOCALAPPDATA%\VirtualDiskMokuroku\cache`.
+While auto-save is off, unsaved changes are written to `<name>.vdmoku.editing` in the same folder, and saving replaces
+the catalog with that file (a `.editing` file left behind by a crash can simply be deleted).
 
 ## Limitations
 
