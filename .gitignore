@@ -7,7 +7,8 @@ build/
 dist/
 
 # Everything 本体と es.exe は配布物に含めない
-everything_portable/
+everything_portable/*
+!everything_portable/.gitkeep
 
 # カタログファイル
 *.vdmoku
