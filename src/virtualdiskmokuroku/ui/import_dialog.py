@@ -42,7 +42,7 @@ class ImportWorker(QThread):
 
 
 class ImportDialog(QDialog):
-    """他のカタログソフトのファイル (.cas / .fsr) を取り込む。開くとすぐに取り込みを始める。"""
+    """他のカタログソフトのファイル (.cas / .caz / .fsr) を取り込む。開くとすぐに取り込みを始める。"""
 
     def __init__(self, catalog: Catalog, path: str | os.PathLike[str], parent=None):
         super().__init__(parent)

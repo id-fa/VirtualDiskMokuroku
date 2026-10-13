@@ -52,7 +52,7 @@ python VirtualDiskMokuroku.pyw [カタログ.vdmoku]
 | 変更の保存 / 破棄 | 変更はカタログと同じフォルダの作業用コピー (`<名前>.vdmoku.editing`) に書かれ、「ファイル」→「カタログを保存」(Ctrl+S) で本体に反映します。「変更を破棄して読み直す」で最後に保存した状態に戻せます。閉じるときや別のカタログを開くときは、保存するか破棄するか尋ねます。「設定」→「アプリ設定」の「変更をすぐにカタログに保存する (自動保存)」をオンにすると、その場でカタログに書き込みます |
 | カタログの暗号化 | 新規作成時に選択、または「設定」→「カタログ設定」→「暗号化 / パスワード」 |
 | 無視リスト・拡張コンテキスト | 「設定」→「カタログ設定」(カタログごとに保存されます) |
-| Virtual CD-ROM Case からの移行 (アルファ版) | 「ファイル」→「他のソフトのカタログをインポート」で `.cas` を選択 (圧縮なしで保存したものが対象。[詳細](#virtual-cd-rom-case-のカタログのインポート-アルファ版)) |
+| Virtual CD-ROM Case からの移行 (アルファ版) | 「ファイル」→「他のソフトのカタログをインポート」で `.cas` / `.caz` を選択 (圧縮して保存したものも可。[詳細](#virtual-cd-rom-case-のカタログのインポート-アルファ版)) |
 | メディアステンシルからの移行 (アルファ版) | 「ファイル」→「他のソフトのカタログをインポート」で `.fsr` を選択 ([詳細](#メディアステンシルの記録ファイルのインポート-アルファ版)) |
 
 ### 拡張コンテキスト
@@ -107,17 +107,11 @@ python VirtualDiskMokuroku.pyw [カタログ.vdmoku]
 > 解析から推定しています。読めないファイルや、取り込まれない項目・誤って取り込まれる項目がある可能性があります。
 > 取り込み後も元の `.cas` ファイルは残しておいてください。
 
-Virtual CD-ROM Case のカタログ (`.cas`) に登録されているドライブを、開いているカタログへまとめて追加できます。
-元のメディアが手元に無くても取り込めます。
+Virtual CD-ROM Case のカタログ (`.cas` / `.caz`) に登録されているドライブを、開いているカタログへまとめて追加できます。
+元のメディアが手元に無くても取り込めます。圧縮して保存したファイル (「casファイルを圧縮して保存する (Zlibにより圧縮)」の
+`.cas` と、「常に圧縮して保存する (caz形式)」の `.caz`) もそのまま取り込めます (UNLHA32.DLL は不要です)。
 
-Virtual CD-ROM Case で下記の設定で保存したファイルが対象です。
-
-- オプションの保存項目で「casファイルを圧縮して保存する。(Z)<Zlibにより圧縮>」のチェックをオフにする
-- オプションの保存項目で「常に圧縮して保存する。(A)<caz形式、UNLHA32.DLLが必要です>」のチェックをオフにする
-- 名前を付けて保存でファイルの種類を「Caseファイル(*.cas)」を選択する (「Case圧縮ファイル(*.caz)」は不可)
-
-Virtual CD-ROM Case 本体は下記からダウンロード可能で、Windows 11 でも動作します。圧縮して保存したファイルは、
-Virtual CD-ROM Case で開いて上記の設定で保存し直してください。
+Virtual CD-ROM Case 本体は下記からダウンロード可能で、Windows 11 でも動作します。
 
 - <http://www.hi-ho.ne.jp/hiro30/soft.html>
 - <https://www.vector.co.jp/soft/win95/util/se078992.html>
@@ -184,7 +178,7 @@ virtualdiskmokuroku scan E:\ my.vdmoku [--name 名前] スキャンして追加/
 virtualdiskmokuroku scan E:\ my.vdmoku --encrypt --password ****   暗号化カタログとして新規作成
 virtualdiskmokuroku list my.vdmoku                   カタログ内のドライブ一覧
 virtualdiskmokuroku find my.vdmoku 語1 語2           全ドライブを名前で検索
-virtualdiskmokuroku import old.cas my.vdmoku         Virtual CD-ROM Case のカタログ (.cas) かメディアステンシルの記録ファイル (.fsr) を取り込む (アルファ版。カタログが無ければ作成)
+virtualdiskmokuroku import old.cas my.vdmoku         Virtual CD-ROM Case のカタログ (.cas / .caz) かメディアステンシルの記録ファイル (.fsr) を取り込む (アルファ版。カタログが無ければ作成)
 ```
 
 ソースツリーから実行する場合は `python VirtualDiskMokuroku.pyw scan ...` としてください。

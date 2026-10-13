@@ -144,8 +144,8 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--password")
     scan.set_defaults(func=cmd_scan)
 
-    import_ = sub.add_parser("import", help=tr('Virtual CD-ROM Case のカタログ (.cas) かメディアステンシルの記録ファイル (.fsr) を取り込む'))
-    import_.add_argument("source", help=tr('取り込む .cas / .fsr ファイル'))
+    import_ = sub.add_parser("import", help=tr('Virtual CD-ROM Case のカタログ (.cas / .caz) かメディアステンシルの記録ファイル (.fsr) を取り込む'))
+    import_.add_argument("source", help=tr('取り込む .cas / .caz / .fsr ファイル'))
     import_.add_argument("catalog", help=tr('カタログファイル (.vdmoku)。無ければ作成'))
     import_.add_argument("--encrypt", action="store_true", help=tr('カタログを新規作成する場合に暗号化する (--password が必要)'))
     import_.add_argument("--password")

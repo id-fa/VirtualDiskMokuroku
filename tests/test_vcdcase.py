@@ -319,3 +319,48 @@ def test_cli_import(cas_path, tmp_path, monkeypatch, capsys):
     assert cli.main(["find", str(target), "海"]) == 0
     assert "[BACKUP_2003] ?:\\写真\\海.jpg" in capsys.readouterr().out
     assert cli.main(["import", str(tmp_path / "missing.cas"), str(target)]) == 1
+
+
+def test_compressed_case_files(tmp_path):
+    """圧縮して保存した .cas (gzip) と .caz (LZH) も、圧縮なしの .cas と同じ内容に読める。"""
+    import gzip
+
+    from virtualdiskmokuroku.core import lzh
+
+    plain = sample.sample_case()
+    expected = vcdcase.parse_case(plain)
+
+    # 「cas ファイルを圧縮して保存する (Zlib により圧縮)」: 全体が gzip 形式
+    zipped = gzip.compress(plain, mtime=0)
+    assert vcdcase.unwrap_compressed(zipped) == plain
+    assert vcdcase.parse_case(zipped) == expected
+    with pytest.raises(CatalogError, match="展開できません"):
+        vcdcase.parse_case(zipped[:-20])
+
+    # 「常に圧縮して保存する (caz 形式)」: UNLHA32.DLL が作る LZH 書庫 (ヘッダレベル 2、-lh5-) に .cas が 1 つ
+    data_dir = os.path.join(os.path.dirname(__file__), "data")
+    for name, level in (("vcdcase_sample.caz", 2), ("vcdcase_sample_h0.lzh", 0), ("vcdcase_sample_h1.lzh", 1)):
+        with open(os.path.join(data_dir, name), "rb") as stream:
+            archived = stream.read()
+        assert lzh.is_lzh(archived) and archived[20] == level
+        members = list(lzh.iter_members(archived))
+        assert [(member.name.lower(), member.method, member.original_size) for member in members] == [("sample.cas", b"-lh5-", len(plain))]
+        assert lzh.extract_member(archived, members[0]) == plain
+        assert vcdcase.parse_case(archived) == expected
+
+    # インポートでも圧縮なしと同じドライブが登録される
+    (tmp_path / "plain.cas").write_bytes(plain)
+    (tmp_path / "sample.caz").write_bytes(archived)
+    from_cas = import_vcdcase(Catalog.create(tmp_path / "a.vdmoku", cache_root=tmp_path / "cache"), tmp_path / "plain.cas")
+    from_caz = import_vcdcase(Catalog.create(tmp_path / "b.vdmoku", cache_root=tmp_path / "cache"), tmp_path / "sample.caz")
+    assert [drive["name"] for drive in from_caz.drives] == [drive["name"] for drive in from_cas.drives]
+
+    # 壊れた書庫
+    with pytest.raises(CatalogError, match="LZH"):
+        lzh.extract_first(archived[:60])
+    broken = bytearray(archived)
+    broken[2:7] = b"-lh1-"
+    with pytest.raises(CatalogError, match="-lh1-"):
+        vcdcase.parse_case(bytes(broken))
+    with pytest.raises(CatalogError, match="ではありません"):
+        vcdcase.parse_case(b"\x00" * 40)

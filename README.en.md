@@ -49,7 +49,7 @@ After `pip install -e .`, the `virtualdiskmokuroku` command starts it as well.
 | Saving / discarding changes | Changes are written to a working copy (`<name>.vdmoku.editing`) in the catalog's folder and applied to the catalog with File → Save catalog (Ctrl+S). "Revert unsaved changes" returns to the last saved state. When closing or opening another catalog, you are asked whether to save or discard. Turn on "Save changes to the catalog immediately (auto-save)" in Settings → Application settings to write every change to the catalog right away |
 | Catalog encryption | Choose it when creating a catalog, or Settings → Catalog settings → Encryption / password |
 | Ignore list, extended context | Settings → Catalog settings (stored per catalog) |
-| Migration from Virtual CD-ROM Case (alpha) | File → Import catalog from another application and choose a `.cas` file (saved without compression; see [details](#importing-virtual-cd-rom-case-catalogs-alpha)) |
+| Migration from Virtual CD-ROM Case (alpha) | File → Import catalog from another application and choose a `.cas` / `.caz` file (compressed files are fine; see [details](#importing-virtual-cd-rom-case-catalogs-alpha)) |
 | Migration from Media Stencil (alpha) | File → Import catalog from another application and choose a `.fsr` file (see [details](#importing-media-stencil-record-files-alpha)) |
 
 ### Extended context
@@ -111,17 +111,12 @@ What encryption does not protect:
 > structure was inferred from analysing real files. Some files may not be readable, and some items may be missed or
 > imported incorrectly. Keep the original `.cas` files after importing.
 
-All drives registered in a Virtual CD-ROM Case catalog (`.cas`) can be added to the open catalog at once, even if
-the original media is no longer at hand.
+All drives registered in a Virtual CD-ROM Case catalog (`.cas` / `.caz`) can be added to the open catalog at once,
+even if the original media is no longer at hand. Compressed files (a `.cas` saved with "Compress the cas file when
+saving (compressed with Zlib)" and a `.caz` saved with "Always compress when saving (caz format)") are imported as
+they are; UNLHA32.DLL is not needed.
 
-The file must have been saved by Virtual CD-ROM Case with the following settings:
-
-- In the save options, turn off "Compress the cas file when saving (Z) <compressed with Zlib>"
-- In the save options, turn off "Always compress when saving (A) <caz format, requires UNLHA32.DLL>"
-- In "Save as", choose the file type "Case file (*.cas)" ("Case compressed file (*.caz)" is not supported)
-
-Virtual CD-ROM Case itself can be downloaded from the pages below and still runs on Windows 11. Open a compressed
-file in Virtual CD-ROM Case and save it again with the settings above.
+Virtual CD-ROM Case itself can be downloaded from the pages below and still runs on Windows 11.
 
 - <http://www.hi-ho.ne.jp/hiro30/soft.html>
 - <https://www.vector.co.jp/soft/win95/util/se078992.html>
@@ -196,7 +191,7 @@ virtualdiskmokuroku scan E:\ my.vdmoku [--name NAME] Scan and add / update (the 
 virtualdiskmokuroku scan E:\ my.vdmoku --encrypt --password ****   Create a new encrypted catalog
 virtualdiskmokuroku list my.vdmoku                   List the drives in a catalog
 virtualdiskmokuroku find my.vdmoku word1 word2       Search all drives by name
-virtualdiskmokuroku import old.cas my.vdmoku         Import a Virtual CD-ROM Case catalog (.cas) or a Media Stencil record file (.fsr) (alpha; the catalog is created if missing)
+virtualdiskmokuroku import old.cas my.vdmoku         Import a Virtual CD-ROM Case catalog (.cas / .caz) or a Media Stencil record file (.fsr) (alpha; the catalog is created if missing)
 ```
 
 From the source tree, run `python VirtualDiskMokuroku.pyw scan ...`.

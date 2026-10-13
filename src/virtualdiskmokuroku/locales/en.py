@@ -40,8 +40,8 @@ STRINGS: dict[str, str] = {
     "{name} のパスワード:": "Password for {name}:",
     "カタログ (*{ext})": "Catalog (*{ext})",
     "カタログ ({patterns})": "Catalog ({patterns})",
-    "インポートできるファイル (*.cas *.fsr);;Virtual CD-ROM Case のカタログ (*.cas);;メディアステンシルの記録ファイル (*.fsr);;すべてのファイル (*)":
-        "Importable files (*.cas *.fsr);;Virtual CD-ROM Case catalog (*.cas);;Media Stencil record file (*.fsr);;All files (*)",
+    "インポートできるファイル (*.cas *.caz *.fsr);;Virtual CD-ROM Case のカタログ (*.cas *.caz);;メディアステンシルの記録ファイル (*.fsr);;すべてのファイル (*)":
+        "Importable files (*.cas *.caz *.fsr);;Virtual CD-ROM Case catalog (*.cas *.caz);;Media Stencil record file (*.fsr);;All files (*)",
     "更新": "Update",
     "追加": "Add",
     # ------------------------------------------------------------------ CLI
@@ -55,9 +55,9 @@ STRINGS: dict[str, str] = {
     "カタログ上の表示名": "Display name in the catalog",
     "既存ドライブと照合せず新規に追加": "Add as a new drive without matching existing drives",
     "カタログを新規作成する場合に暗号化する (--password が必要)": "Encrypt the catalog when creating it (requires --password)",
-    "Virtual CD-ROM Case のカタログ (.cas) かメディアステンシルの記録ファイル (.fsr) を取り込む":
-        "Import a Virtual CD-ROM Case catalog (.cas) or a Media Stencil record file (.fsr)",
-    "取り込む .cas / .fsr ファイル": ".cas / .fsr file to import",
+    "Virtual CD-ROM Case のカタログ (.cas / .caz) かメディアステンシルの記録ファイル (.fsr) を取り込む":
+        "Import a Virtual CD-ROM Case catalog (.cas / .caz) or a Media Stencil record file (.fsr)",
+    "取り込む .cas / .caz / .fsr ファイル": ".cas / .caz / .fsr file to import",
     "カタログ内のドライブ一覧": "List the drives in a catalog",
     "カタログ内の全ドライブを名前で検索": "Search all drives in a catalog by name",
     "--encrypt には --password の指定が必要です": "--encrypt requires --password",
@@ -229,8 +229,15 @@ STRINGS: dict[str, str] = {
         "Cannot read the Virtual CD-ROM Case catalog (structure mismatch near offset 0x{pos:X})",
     "。形式バージョン {schema} には対応していません (確認済みは {SUPPORTED_SCHEMA})":
         ". Format version {schema} is not supported (verified: {SUPPORTED_SCHEMA})",
-    "圧縮なしで保存した Virtual CD-ROM Case のカタログ (.cas) ではありません。圧縮して保存した .cas や .caz は、Virtual CD-ROM Case で圧縮をオフにして .cas 形式で保存し直してください":
-        "Not an uncompressed Virtual CD-ROM Case catalog (.cas). For a compressed .cas or .caz, turn off compression in Virtual CD-ROM Case and save it again as .cas",
+    "Virtual CD-ROM Case のカタログ (.cas / .caz) ではありません": "Not a Virtual CD-ROM Case catalog (.cas / .caz)",
+    "圧縮された .cas を展開できません ({error})": "Cannot decompress the compressed .cas ({error})",
+    # ------------------------------------------------------------------ core: LZH
+    "LZH 書庫のヘッダが壊れています": "The LZH archive header is corrupt",
+    "対応していない LZH の圧縮方式です: {method}": "Unsupported LZH compression method: {method}",
+    "対応していない LZH のヘッダ形式です (レベル {level})": "Unsupported LZH header format (level {level})",
+    "LZH 書庫が途中で切れています": "The LZH archive is truncated",
+    "LZH 書庫にファイルがありません": "The LZH archive contains no files",
+    "LZH の圧縮データが壊れています": "The LZH compressed data is corrupt",
     "取り込めるドライブがありません: {path}": "No drives to import: {path}",
     # ------------------------------------------------------------------ core: メディアステンシル
     "メディアステンシルの記録ファイル (.fsr) ではありません": "Not a Media Stencil record file (.fsr)",

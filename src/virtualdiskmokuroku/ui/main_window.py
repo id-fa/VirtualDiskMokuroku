@@ -79,7 +79,7 @@ _CATALOG_FILTER = "カタログ (*{ext})"
 _OPEN_PATTERNS = " ".join(f"*{ext}" for ext in (CATALOG_EXTENSION, *LEGACY_CATALOG_EXTENSIONS))
 _OPEN_FILTER = "カタログ ({patterns})"
 _IMPORT_FILTER = (
-    "インポートできるファイル (*.cas *.fsr);;Virtual CD-ROM Case のカタログ (*.cas);;"
+    "インポートできるファイル (*.cas *.caz *.fsr);;Virtual CD-ROM Case のカタログ (*.cas *.caz);;"
     "メディアステンシルの記録ファイル (*.fsr);;すべてのファイル (*)"
 )
 _SOURCE_NAMES = {
@@ -1326,7 +1326,7 @@ class MainWindow(QMainWindow):
             self._after_catalog_changed(dialog.updated_drive_id)
 
     def import_catalog(self, path: str | None = None) -> None:
-        """他のカタログソフトのファイル (.cas / .fsr) の全ドライブを、開いているカタログへ追加する。"""
+        """他のカタログソフトのファイル (.cas / .caz / .fsr) の全ドライブを、開いているカタログへ追加する。"""
         if self.catalog is None:
             return
         if not path:

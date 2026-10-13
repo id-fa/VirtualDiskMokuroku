@@ -1,6 +1,6 @@
 """他のカタログソフトのデータの取り込み(GUI と CLI で共用)。
 
-対応しているのは Virtual CD-ROM Case の .cas (``core/vcdcase.py``) とメディアステンシルの .fsr
+対応しているのは Virtual CD-ROM Case の .cas / .caz (``core/vcdcase.py``。圧縮して保存したものも可) とメディアステンシルの .fsr
 (``core/stencil.py``)。どちらも、ドライブごとに files.db (と、コメントなどがあれば context.db) を作ってカタログへ
 新規登録する。
 
@@ -81,7 +81,7 @@ def import_catalog(
     progress: ProgressCallback | None = None,
     is_cancelled: Callable[[], bool] | None = None,
 ) -> ImportOutcome:
-    """他のカタログソフトのファイル (.cas / .fsr) の全ドライブを ``catalog`` へ新規登録する。形式は中身で判定する。
+    """他のカタログソフトのファイル (.cas / .caz / .fsr) の全ドライブを ``catalog`` へ新規登録する。形式は中身で判定する。
 
     進捗は ``progress(phase, count)`` で通知する。phase は ``import_total`` (ドライブ数) / ``import`` (処理済みの
     ドライブ数) / ``save``。キャンセルすると ``ScanCancelled`` を送出する(ドライブが多い場合は途中で何度か

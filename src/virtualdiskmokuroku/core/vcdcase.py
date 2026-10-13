@@ -1,7 +1,9 @@
-"""Virtual CD-ROM Case のカタログ (.cas) の読み取り (アルファ版。形式は調査中)。
+"""Virtual CD-ROM Case のカタログ (.cas / .caz) の読み取り (アルファ版。形式は調査中)。
 
-対象は圧縮なしで保存した .cas だけ。Zlib で圧縮した .cas や .caz (LHA) は読めないので、Virtual CD-ROM Case の
-オプションで圧縮をオフにして保存し直してもらう (README の「Virtual CD-ROM Case のカタログのインポート」を参照)。
+圧縮して保存したファイルも読める。「cas ファイルを圧縮して保存する (Zlib により圧縮)」で保存した .cas は、
+.cas 全体を gzip 形式 (RFC 1952。zlib の gzip ラッパー) にしたもの。「常に圧縮して保存する (caz 形式)」の .caz は、
+UNLHA32.DLL で .cas を 1 つ入れた LZH 書庫 (ヘッダレベル 2、-lh5-) で、``core/lzh.py`` で展開する。
+どちらも中身は圧縮なしの .cas と同じ構造 (保存時のファイルパスが違うだけ)。
 
 .cas は MFC の CArchive で書かれたバイナリで、仕様は公開されていない。以下は実際のファイル (スキーマ 12) を
 CSV エクスポートと突き合わせて分かった構造で、意味の分からない部分は読み飛ばしている。整数はリトルエンディアン、
@@ -35,21 +37,22 @@ CSV エクスポートと突き合わせて分かった構造で、意味の分�
 
 from __future__ import annotations
 
+import gzip
 import re
 import struct
+import zlib
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from . import lzh
 from .errors import CatalogError, ScanCancelled
 from ..i18n import tr
 
 SUPPORTED_SCHEMA = 12
 DEFAULT_ENCODING = "cp932"
 
-_NOT_A_CASE = (
-    "圧縮なしで保存した Virtual CD-ROM Case のカタログ (.cas) ではありません。"
-    "圧縮して保存した .cas や .caz は、Virtual CD-ROM Case で圧縮をオフにして .cas 形式で保存し直してください"
-)
+_NOT_A_CASE = "Virtual CD-ROM Case のカタログ (.cas / .caz) ではありません"
+_GZIP_MAGIC = b"\x1f\x8b"
 _CLASS_NAME = b"CCDCase"
 _CLASS_HEAD = struct.Struct("<HHH")
 _HEADER_UNKNOWN = 12
@@ -251,10 +254,23 @@ def property_items(properties: list[bytes]) -> list[tuple[str, str]]:
     return items
 
 
+def unwrap_compressed(data: bytes) -> bytes:
+    """圧縮して保存した .cas (gzip) / .caz (LZH) なら展開して返す。圧縮されていなければそのまま返す。"""
+    if data.startswith(_GZIP_MAGIC):
+        try:
+            return gzip.decompress(data)
+        except (OSError, EOFError, zlib.error) as error:
+            raise CatalogError(tr('圧縮された .cas を展開できません ({error})').format(error=error)) from error
+    if lzh.is_lzh(data):
+        return lzh.extract_first(data)
+    return data
+
+
 def parse_case(
     data: bytes, *, encoding: str = DEFAULT_ENCODING, is_cancelled: Callable[[], bool] | None = None
 ) -> CaseFile:
-    """.cas の中身を読む。``encoding`` はファイル名などの文字コード。読めない場合は ``CatalogError``。"""
+    """.cas / .caz の中身を読む。``encoding`` はファイル名などの文字コード。読めない場合は ``CatalogError``。"""
+    data = unwrap_compressed(data)
     reader = _Reader(data)
     header = data[: _CLASS_HEAD.size + len(_CLASS_NAME)]
     if len(header) < _CLASS_HEAD.size or not header.endswith(_CLASS_NAME):
