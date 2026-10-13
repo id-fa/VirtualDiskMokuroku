@@ -16,6 +16,13 @@ from ..i18n import tr
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
 _DRIVE_TYPES = {0: "unknown", 1: "no_root", 2: "removable", 3: "fixed", 4: "remote", 5: "cdrom", 6: "ramdisk"}
+
+
+def drive_type_name(code: int) -> str:
+    """GetDriveType の値をこのアプリでの種類名にする。"""
+    return _DRIVE_TYPES.get(code, "unknown")
+
+
 _BUS_TYPES = {
     1: "SCSI", 2: "ATAPI", 3: "ATA", 4: "IEEE1394", 5: "SSA", 6: "FibreChannel", 7: "USB", 8: "RAID",
     9: "iSCSI", 10: "SAS", 11: "SATA", 12: "SD", 13: "MMC", 14: "Virtual", 15: "FileBackedVirtual",

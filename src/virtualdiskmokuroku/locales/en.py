@@ -27,6 +27,8 @@ STRINGS: dict[str, str] = {
     "直接走査": "Direct scan",
     "Virtual CD-ROM Case からインポート": "Imported from Virtual CD-ROM Case",
     "Virtual CD-ROM Case からのインポート": "Imported from Virtual CD-ROM Case",
+    "メディアステンシルからインポート": "Imported from Media Stencil",
+    "メディアステンシルからのインポート": "Imported from Media Stencil",
     "ローカル ディスク": "Local Disk",
     "リムーバブル": "Removable",
     "ローカル": "Local",
@@ -38,7 +40,8 @@ STRINGS: dict[str, str] = {
     "{name} のパスワード:": "Password for {name}:",
     "カタログ (*{ext})": "Catalog (*{ext})",
     "カタログ ({patterns})": "Catalog ({patterns})",
-    "Virtual CD-ROM Case のカタログ (*.cas);;すべてのファイル (*)": "Virtual CD-ROM Case catalog (*.cas);;All files (*)",
+    "インポートできるファイル (*.cas *.fsr);;Virtual CD-ROM Case のカタログ (*.cas);;メディアステンシルの記録ファイル (*.fsr);;すべてのファイル (*)":
+        "Importable files (*.cas *.fsr);;Virtual CD-ROM Case catalog (*.cas);;Media Stencil record file (*.fsr);;All files (*)",
     "更新": "Update",
     "追加": "Add",
     # ------------------------------------------------------------------ CLI
@@ -52,8 +55,9 @@ STRINGS: dict[str, str] = {
     "カタログ上の表示名": "Display name in the catalog",
     "既存ドライブと照合せず新規に追加": "Add as a new drive without matching existing drives",
     "カタログを新規作成する場合に暗号化する (--password が必要)": "Encrypt the catalog when creating it (requires --password)",
-    "Virtual CD-ROM Case のカタログ (.cas) を取り込む": "Import a Virtual CD-ROM Case catalog (.cas)",
-    "取り込む .cas ファイル": ".cas file to import",
+    "Virtual CD-ROM Case のカタログ (.cas) かメディアステンシルの記録ファイル (.fsr) を取り込む":
+        "Import a Virtual CD-ROM Case catalog (.cas) or a Media Stencil record file (.fsr)",
+    "取り込む .cas / .fsr ファイル": ".cas / .fsr file to import",
     "カタログ内のドライブ一覧": "List the drives in a catalog",
     "カタログ内の全ドライブを名前で検索": "Search all drives in a catalog by name",
     "--encrypt には --password の指定が必要です": "--encrypt requires --password",
@@ -228,10 +232,19 @@ STRINGS: dict[str, str] = {
     "圧縮なしで保存した Virtual CD-ROM Case のカタログ (.cas) ではありません。圧縮して保存した .cas や .caz は、Virtual CD-ROM Case で圧縮をオフにして .cas 形式で保存し直してください":
         "Not an uncompressed Virtual CD-ROM Case catalog (.cas). For a compressed .cas or .caz, turn off compression in Virtual CD-ROM Case and save it again as .cas",
     "取り込めるドライブがありません: {path}": "No drives to import: {path}",
+    # ------------------------------------------------------------------ core: メディアステンシル
+    "メディアステンシルの記録ファイル (.fsr) ではありません": "Not a Media Stencil record file (.fsr)",
+    "オブジェクトの印が不正です": "Invalid object tag",
+    "クラスが合いません ({name})": "Unexpected class ({name})",
+    "フォルダリストの番号が不正です": "Invalid folder list number",
+    "メディアステンシルの記録ファイルを読み取れません (位置 0x{pos:X} 付近で構造が合いません)":
+        "Cannot read the Media Stencil record file (structure mismatch near offset 0x{pos:X})",
+    "。形式バージョン {version} には対応していません (確認済みは {SUPPORTED_VERSION})":
+        ". Format version {version} is not supported (verified: {SUPPORTED_VERSION})",
     "必要なライブラリが無いため取得しなかった拡張コンテキストがあります: {labels}":
         "Some extended context was skipped because the required library is missing: {labels}",
     # ------------------------------------------------------------------ インポートダイアログ
-    "Virtual CD-ROM Case のカタログをインポート": "Import a Virtual CD-ROM Case catalog",
+    "他のソフトのカタログをインポート": "Import a catalog from another application",
     "ファイルを読み込み中…": "Reading the file…",
     "キャンセルしました。": "Cancelled.",
     "キャンセルしています…": "Cancelling…",
@@ -259,7 +272,7 @@ STRINGS: dict[str, str] = {
     "カタログを開く(&O)…": "&Open catalog…",
     "カタログを閉じる(&C)": "&Close catalog",
     "終了(&X)": "E&xit",
-    "Virtual CD-ROM Case のカタログをインポート(&I)…": "&Import Virtual CD-ROM Case catalog…",
+    "他のソフトのカタログをインポート(&I)…": "&Import catalog from another application…",
     "表示中の一覧をエクスポート(&E)…": "&Export current list…",
     "復号して別のカタログに書き出す(&D)…": "Export &decrypted copy…",
     "名前をコピー(&C)": "&Copy names",

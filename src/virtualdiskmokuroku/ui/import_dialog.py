@@ -11,7 +11,7 @@ from PySide6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QMessageBox, QP
 from ..core.catalog import Catalog
 from ..core.errors import ScanCancelled
 from ..core.formatting import format_size
-from ..importer import ImportOutcome, import_vcdcase
+from ..importer import ImportOutcome, import_catalog
 from ..i18n import tr
 
 
@@ -31,7 +31,7 @@ class ImportWorker(QThread):
 
     def run(self) -> None:
         try:
-            outcome = import_vcdcase(
+            outcome = import_catalog(
                 self._catalog, self._path, progress=self.progress.emit, is_cancelled=self._cancel.is_set
             )
             self.succeeded.emit(outcome)
@@ -42,11 +42,11 @@ class ImportWorker(QThread):
 
 
 class ImportDialog(QDialog):
-    """Virtual CD-ROM Case のカタログ (.cas) を取り込む。開くとすぐに取り込みを始める。"""
+    """他のカタログソフトのファイル (.cas / .fsr) を取り込む。開くとすぐに取り込みを始める。"""
 
     def __init__(self, catalog: Catalog, path: str | os.PathLike[str], parent=None):
         super().__init__(parent)
-        self.setWindowTitle(tr('Virtual CD-ROM Case のカタログをインポート'))
+        self.setWindowTitle(tr('他のソフトのカタログをインポート'))
         self.resize(560, 220)
         self.outcome: ImportOutcome | None = None  # 取り込みに成功すると設定される
         self.error: str | None = None  # 失敗した場合のメッセージ (キャンセルは空文字)

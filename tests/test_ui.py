@@ -606,8 +606,8 @@ def test_import_vcdcase(window, tmp_path, monkeypatch):
         dialog.reject()
 
     monkeypatch.setattr(ImportDialog, "exec", run_dialog)
-    assert window.act_import_vcdcase.isEnabled()
-    window.import_vcdcase(str(cas_path))
+    assert window.act_import.isEnabled()
+    window.import_catalog(str(cas_path))
     assert dialogs[0].outcome is not None and "2 台のドライブを追加しました" in dialogs[0]._status.text()
 
     # 追加されたドライブへ移動している
@@ -643,7 +643,7 @@ def test_import_vcdcase(window, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
     monkeypatch.setattr(QMessageBox, "critical", lambda _parent, _title, text: shown_errors.append(text))
-    window.import_vcdcase(str(broken))
+    window.import_catalog(str(broken))
     assert dialogs[1].outcome is None and "構造が合いません" in shown_errors[0]
     assert window.tree_model.rowCount() == 4
 

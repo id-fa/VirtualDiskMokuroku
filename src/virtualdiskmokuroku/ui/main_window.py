@@ -78,8 +78,16 @@ APP_NAME = "VirtualDiskMokuroku"
 _CATALOG_FILTER = "カタログ (*{ext})"
 _OPEN_PATTERNS = " ".join(f"*{ext}" for ext in (CATALOG_EXTENSION, *LEGACY_CATALOG_EXTENSIONS))
 _OPEN_FILTER = "カタログ ({patterns})"
-_IMPORT_FILTER = "Virtual CD-ROM Case のカタログ (*.cas);;すべてのファイル (*)"
-_SOURCE_NAMES = {"everything": "Everything", "walk": "直接走査", "vcdcase": "Virtual CD-ROM Case からインポート"}
+_IMPORT_FILTER = (
+    "インポートできるファイル (*.cas *.fsr);;Virtual CD-ROM Case のカタログ (*.cas);;"
+    "メディアステンシルの記録ファイル (*.fsr);;すべてのファイル (*)"
+)
+_SOURCE_NAMES = {
+    "everything": "Everything",
+    "walk": "直接走査",
+    "vcdcase": "Virtual CD-ROM Case からインポート",
+    "stencil": "メディアステンシルからインポート",
+}
 _EVERYTHING_URL = "https://www.voidtools.com/"  # ヘルプの文言に含まれる URL (リンクにする)
 _FILTER_DELAY_MS = 180
 
@@ -304,7 +312,7 @@ class MainWindow(QMainWindow):
         self.act_open = action(tr('カタログを開く(&O)…'), self.open_catalog_dialog, QKeySequence.StandardKey.Open)
         self.act_close = action(tr('カタログを閉じる(&C)'), self.close_catalog)
         self.act_exit = action(tr('終了(&X)'), self.close)
-        self.act_import_vcdcase = action(tr('Virtual CD-ROM Case のカタログをインポート(&I)…'), self.import_vcdcase)
+        self.act_import = action(tr('他のソフトのカタログをインポート(&I)…'), self.import_catalog)
         self.act_export = action(tr('表示中の一覧をエクスポート(&E)…'), self.export_rows, "Ctrl+E")
         self.act_export_decrypted = action(tr('復号して別のカタログに書き出す(&D)…'), self.export_decrypted)
         self.act_copy_names = action(tr('名前をコピー(&C)'), self.copy_names, QKeySequence.StandardKey.Copy)
@@ -342,7 +350,7 @@ class MainWindow(QMainWindow):
         self.recent_menu.aboutToShow.connect(self._fill_recent_menu)
         file_menu.addAction(self.act_close)
         file_menu.addSeparator()
-        file_menu.addAction(self.act_import_vcdcase)
+        file_menu.addAction(self.act_import)
         file_menu.addAction(self.act_export)
         file_menu.addAction(self.act_export_decrypted)
         file_menu.addSeparator()
@@ -430,7 +438,7 @@ class MainWindow(QMainWindow):
     def _update_ui_state(self) -> None:
         has_catalog = self.catalog is not None
         has_drive = self._location is not None
-        for item in (self.act_close, self.act_scan, self.act_catalog_settings, self.act_import_vcdcase):
+        for item in (self.act_close, self.act_scan, self.act_catalog_settings, self.act_import):
             item.setEnabled(has_catalog)
         self.act_organize.setEnabled(has_catalog and bool(self.catalog.drives))  # type: ignore[union-attr]
         for item in (
@@ -1244,12 +1252,12 @@ class MainWindow(QMainWindow):
         if dialog.updated_drive_id:
             self._after_catalog_changed(dialog.updated_drive_id)
 
-    def import_vcdcase(self, path: str | None = None) -> None:
-        """Virtual CD-ROM Case のカタログ (.cas) の全ドライブを、開いているカタログへ追加する。"""
+    def import_catalog(self, path: str | None = None) -> None:
+        """他のカタログソフトのファイル (.cas / .fsr) の全ドライブを、開いているカタログへ追加する。"""
         if self.catalog is None:
             return
         if not path:
-            path, _filter = QFileDialog.getOpenFileName(self, tr('Virtual CD-ROM Case のカタログをインポート'), "", tr(_IMPORT_FILTER))
+            path, _filter = QFileDialog.getOpenFileName(self, tr('他のソフトのカタログをインポート'), "", tr(_IMPORT_FILTER))
             if not path:
                 return
         known = {drive["id"] for drive in self.catalog.drives}

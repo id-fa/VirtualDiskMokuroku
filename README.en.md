@@ -46,7 +46,8 @@ After `pip install -e .`, the `virtualdiskmokuroku` command starts it as well.
 | Backups | Keeps the previous database inside the catalog when a drive is updated (1 generation by default). Drive → Restore from backup |
 | Catalog encryption | Choose it when creating a catalog, or Settings → Catalog settings → Encryption / password |
 | Ignore list, extended context | Settings → Catalog settings (stored per catalog) |
-| Migration from Virtual CD-ROM Case (alpha) | File → Import Virtual CD-ROM Case catalog and choose a `.cas` file (saved without compression; see [details](#importing-virtual-cd-rom-case-catalogs-alpha)) |
+| Migration from Virtual CD-ROM Case (alpha) | File → Import catalog from another application and choose a `.cas` file (saved without compression; see [details](#importing-virtual-cd-rom-case-catalogs-alpha)) |
+| Migration from Media Stencil (alpha) | File → Import catalog from another application and choose a `.fsr` file (see [details](#importing-media-stencil-record-files-alpha)) |
 
 ### Extended context
 
@@ -144,6 +145,40 @@ What is imported:
   Items whose meaning is unknown are not imported. If a file cannot be read, an error is shown and the catalog is
   left unchanged
 
+### Importing Media Stencil record files (alpha)
+
+> **This feature is alpha.** Support for the Media Stencil format is based on a structure inferred from analysing
+> real files recorded with Version 3.20. Some files may not be readable, and some items may be missed or imported
+> incorrectly. Keep the original `.fsr` files after importing.
+
+All media recorded in a Media Stencil (メディアステンシル, by IzumiYa) record file (`.fsr`) can be added to the
+open catalog at once. Choose File → Import catalog from another application and select the `.fsr` file (the same
+menu as for Virtual CD-ROM Case `.cas` files; the format is detected from the file contents).
+
+- <http://www.eva.hi-ho.ne.jp/izumiya/stencil/index.html> (Japanese)
+
+What is imported:
+
+- Folder structure, sizes, modified times, attributes; volume label, serial number and drive type; the time of
+  recording (becomes the drive's "scanned at" time) and the used space (metadata `stencil_used_bytes`). Capacity
+  and free space are not recorded in the file
+- A name given with "Rename" becomes the drive's display name, and the comment from "Properties" becomes the
+  comment in "Drive info"
+- File icons recorded with "Also read icon information" (16 colours, 32x32) are imported as the thumbnail of
+  that file, visible in the Properties panel and in the thumbnail view. Files whose icon was not recorded (shown
+  with the associated icon) get nothing
+- The contents of CAB and LZH archives recorded with "Also read archive contents" are imported as a single file,
+  as this application does when scanning, and their contents go into "Files inside the archive / image" (name,
+  size, modified time; searchable with "Search extended context too")
+- A folder recorded on its own becomes a drive whose locations start with `?:\path\to\folder` (`?:\` for a whole
+  drive; `.fsr` files do not record drive letters)
+- Imported drives are always added as new drives. Connecting the real drive later and choosing "Update this drive"
+  updates it as the same drive, matched by label and serial number (the imported icons are not kept after an
+  update)
+- The `.fsr` format is not documented, so it is read based on the analysis of real files (format version 1.00,
+  Media Stencil 3.20). Items whose meaning is unknown are not imported. If a file cannot be read, an error is
+  shown and the catalog is left unchanged
+
 ## Display language
 
 The interface is Japanese when the Windows display language is Japanese, and English otherwise. You can fix the
@@ -158,7 +193,7 @@ virtualdiskmokuroku scan E:\ my.vdmoku [--name NAME] Scan and add / update (the 
 virtualdiskmokuroku scan E:\ my.vdmoku --encrypt --password ****   Create a new encrypted catalog
 virtualdiskmokuroku list my.vdmoku                   List the drives in a catalog
 virtualdiskmokuroku find my.vdmoku word1 word2       Search all drives by name
-virtualdiskmokuroku import old.cas my.vdmoku         Import a Virtual CD-ROM Case catalog (alpha; the catalog is created if missing)
+virtualdiskmokuroku import old.cas my.vdmoku         Import a Virtual CD-ROM Case catalog (.cas) or a Media Stencil record file (.fsr) (alpha; the catalog is created if missing)
 ```
 
 From the source tree, run `python VirtualDiskMokuroku.pyw scan ...`.

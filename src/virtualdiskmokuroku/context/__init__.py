@@ -105,7 +105,10 @@ KEY_LABELS: dict[str, str] = {
 }
 
 # 抽出器以外が作る種別 (kind) -> 表示名
-KIND_LABELS: dict[str, str] = {"vcdcase": "Virtual CD-ROM Case からのインポート"}
+KIND_LABELS: dict[str, str] = {
+    "vcdcase": "Virtual CD-ROM Case からのインポート",
+    "stencil": "メディアステンシルからのインポート",
+}
 
 
 def default_context_settings() -> dict:
