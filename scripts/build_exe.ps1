@@ -40,4 +40,6 @@ Copy-Item (Join-Path $root "docs\Everything導入手順.md"), (Join-Path $root "
 $dist = Join-Path $root "dist\VirtualDiskMokuroku"
 Copy-Item (Join-Path $root "README.md"), (Join-Path $root "README.en.md"), (Join-Path $root "LICENSE"), (Join-Path $root "THIRD-PARTY-NOTICES.md") $dist
 Copy-Item (Join-Path $root "licenses") $dist -Recurse -Force
+# Everything 本体と es.exe を利用者が置くための空フォルダ (es.exe の自動検出の対象)
+New-Item -ItemType Directory -Force (Join-Path $dist "everything_portable") | Out-Null
 Write-Host "完了: $(Join-Path $root 'dist\VirtualDiskMokuroku\VirtualDiskMokuroku.exe')"
