@@ -15,6 +15,9 @@ from PySide6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
+    QDragEnterEvent,
+    QDragMoveEvent,
+    QDropEvent,
     QGuiApplication,
     QKeySequence,
     QStandardItem,
@@ -241,6 +244,7 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([300, 900])
         self.setCentralWidget(self.splitter)
+        self.setAcceptDrops(True)  # カタログファイルのドロップで開く
 
         # --- プロパティ
         self.properties = PropertiesPanel()
@@ -654,6 +658,42 @@ class MainWindow(QMainWindow):
     def close_catalog(self) -> None:
         if self._confirm_unsaved():
             self._set_catalog(None)
+
+    # ================================================================== ドラッグ & ドロップでカタログを開く
+    @staticmethod
+    def _dropped_catalog(event: QDragEnterEvent | QDragMoveEvent | QDropEvent) -> str | None:
+        """ドラッグされているものがカタログファイル 1 つなら、そのパスを返す。"""
+        mime = event.mimeData()
+        if not mime.hasUrls():
+            return None
+        urls = mime.urls()
+        if len(urls) != 1 or not urls[0].isLocalFile():
+            return None
+        path = urls[0].toLocalFile()
+        if not path.lower().endswith((CATALOG_EXTENSION, *LEGACY_CATALOG_EXTENSIONS)):
+            return None
+        return path
+
+    def dragEnterEvent(self, event: QDragEnterEvent) -> None:
+        if self._dropped_catalog(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event: QDragMoveEvent) -> None:
+        if self._dropped_catalog(event) is not None:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event: QDropEvent) -> None:
+        path = self._dropped_catalog(event)
+        if path is None:
+            event.ignore()
+            return
+        event.acceptProposedAction()
+        # ドロップ元のアプリを待たせないよう、保存確認やパスワード入力のダイアログはドロップ処理が終わってから出す
+        QTimer.singleShot(0, lambda: self.open_catalog(path))
 
     # ================================================================== 保存・破棄 (自動保存オフのとき)
     def _confirm_unsaved(self) -> bool:

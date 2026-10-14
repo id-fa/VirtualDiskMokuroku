@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMessageBox,
+    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QTableWidget,
@@ -29,7 +30,7 @@ from ..core.es_client import EsClient, EsError, find_es_exe
 from ..core.formatting import format_size
 from ..core.settings import AppSettings
 from ..core.volume import VolumeInfo, list_volumes
-from ..pipeline import scan_into_catalog
+from ..pipeline import ScanOutcome, format_context_errors, scan_into_catalog
 from .style import apply_selection_style
 from ..i18n import tr
 
@@ -49,7 +50,7 @@ _SOURCE_LABELS = [
 
 class ScanWorker(QThread):
     progress = Signal(str, int)
-    succeeded = Signal(object, object, object)  # drive(dict), ScanResult, ContextStats | None
+    succeeded = Signal(object)  # pipeline.ScanOutcome
     failed = Signal(str)  # 空文字はキャンセル
 
     def __init__(self, catalog: Catalog, root: str, drive_id: str | None, name: str, source: str,
@@ -78,7 +79,7 @@ class ScanWorker(QThread):
                 progress=self.progress.emit,
                 is_cancelled=self._cancel.is_set,
             )
-            self.succeeded.emit(outcome.drive, outcome.result, outcome.context_stats)
+            self.succeeded.emit(outcome)
         except ScanCancelled:
             self.failed.emit("")
         except Exception as error:  # noqa: BLE001 - スレッド内の例外は UI に伝える
@@ -100,6 +101,8 @@ class ScanDialog(QDialog):
         self._context_total = 0
         self._in_context_phase = False
         self.updated_drive_id: str | None = None  # スキャン成功時に設定
+        self._error_lines: list[str] = []  # 直前のスキャンで拡張コンテキストの抽出に失敗したファイル
+        self._error_log: str = ""
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(tr('スキャンするドライブを選択してください。')))
@@ -144,6 +147,10 @@ class ScanDialog(QDialog):
         self._start_button.setDefault(True)
         self._start_button.clicked.connect(self._start)
         buttons.addButton(self._start_button, QDialogButtonBox.ButtonRole.ActionRole)
+        self._errors_button = QPushButton(tr('エラーの詳細(&E)...'))
+        self._errors_button.clicked.connect(self._show_errors)
+        buttons.addButton(self._errors_button, QDialogButtonBox.ButtonRole.ActionRole)
+        self._errors_button.setVisible(False)  # addButton が表示状態にするので、追加した後に隠す
         self._close_button = QPushButton(tr('閉じる'))
         self._close_button.clicked.connect(self.reject)
         buttons.addButton(self._close_button, QDialogButtonBox.ButtonRole.RejectRole)
@@ -243,6 +250,8 @@ class ScanDialog(QDialog):
         self._set_running(True)
         self._context_total = 0
         self._in_context_phase = False
+        self._error_lines, self._error_log = [], ""
+        self._errors_button.setVisible(False)
         self._worker = ScanWorker(
             self._catalog, volume.root, self._target.currentData(), self._name.text().strip(), source, es, self
         )
@@ -289,7 +298,8 @@ class ScanDialog(QDialog):
             self._progress.setRange(0, 0)
             self._status.setText(tr('カタログに保存中…'))
 
-    def _on_succeeded(self, drive: dict, result: scanner.ScanResult, context_stats) -> None:
+    def _on_succeeded(self, outcome: ScanOutcome) -> None:
+        drive, result, context_stats = outcome.drive, outcome.result, outcome.context_stats
         self.updated_drive_id = drive["id"]
         stats = result.stats
         lines = [
@@ -304,8 +314,40 @@ class ScanDialog(QDialog):
                 lines.append(
                     tr('拡張コンテキストの取得は途中でキャンセルされました。取得できた分までを登録しています(次回このドライブを更新すると、残りのファイルだけを取得します)。')
                 )
+            if context_stats.errors:
+                self._error_lines = format_context_errors(context_stats, outcome.scan_root)
+                self._error_log = str(outcome.error_log) if outcome.error_log is not None else ""
+                self._errors_button.setVisible(True)
+                lines.append(tr('エラーになったファイルは「エラーの詳細」ボタンで確認できます。'))
+                if self._error_log:
+                    lines.append(tr('エラーの一覧をログに書きました: {path}').format(path=self._error_log))
         lines += [tr('注意: {warning}').format(warning=warning) for warning in result.warnings]
         self._status.setText("\n".join(lines))
+
+    def _show_errors(self) -> None:
+        """拡張コンテキストの抽出に失敗したファイルの一覧を表示する。"""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(tr('拡張コンテキストのエラー'))
+        dialog.resize(820, 480)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(tr('抽出に失敗したファイル ({count:,} 件):').format(count=len(self._error_lines))))
+        text = QPlainTextEdit("\n".join(self._error_lines))
+        text.setReadOnly(True)
+        text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        layout.addWidget(text, 1)
+        if self._error_log:
+            note = QLabel(tr('ログファイル: {path}').format(path=self._error_log))
+        else:
+            note = QLabel(tr('暗号化カタログでは、ファイル名を含むログは書きません。'))
+        note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(note)
+        buttons = QDialogButtonBox()
+        close = QPushButton(tr('閉じる'))
+        close.setDefault(True)
+        buttons.addButton(close, QDialogButtonBox.ButtonRole.RejectRole)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _on_failed(self, message: str) -> None:
         if message:

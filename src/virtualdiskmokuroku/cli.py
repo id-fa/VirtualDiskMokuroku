@@ -18,10 +18,11 @@ from .core.settings import AppSettings
 from .core.volume import get_volume_info, list_volumes
 from .i18n import set_language, tr
 from .importer import import_vcdcase
-from .pipeline import scan_into_catalog
+from .pipeline import format_context_errors, scan_into_catalog
 
 
 _opened: list[Catalog] = []  # 終了時に閉じる(暗号化カタログの復号済みデータを手放す)
+_MAX_ERROR_LINES = 20  # 拡張コンテキストのエラーを標準エラーに出す上限 (残りはログファイルで)
 
 
 def _open_catalog(path: str, password: str | None, create: bool = False, encrypt: bool = False) -> Catalog:
@@ -75,6 +76,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
     stats = outcome.context_stats
     if stats is not None:
         print(tr('拡張コンテキスト: 取得 {processed:,} 件 / 引き継ぎ {reused:,} 件 / エラー {errors:,} 件').format(processed=stats.processed, reused=stats.reused, errors=stats.errors))  # type: ignore[attr-defined]
+        if stats.errors:  # type: ignore[attr-defined]
+            lines = format_context_errors(stats, args.root)
+            for line in lines[:_MAX_ERROR_LINES]:
+                print(tr('エラー: {detail}').format(detail=line), file=sys.stderr)
+            if len(lines) > _MAX_ERROR_LINES:
+                print(tr('…他 {count:,} 件').format(count=len(lines) - _MAX_ERROR_LINES), file=sys.stderr)
+            if outcome.error_log is not None:
+                print(tr('エラーの一覧をログに書きました: {path}').format(path=outcome.error_log), file=sys.stderr)
     for warning in result.warnings:
         print(tr('警告: {warning}').format(warning=warning), file=sys.stderr)
     return 0

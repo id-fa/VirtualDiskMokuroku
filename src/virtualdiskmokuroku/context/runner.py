@@ -33,6 +33,7 @@ class ContextStats:
     processed: int = 0  # 実ファイルを読んだ件数
     reused: int = 0  # 前回結果をそのまま引き継いだ件数
     errors: int = 0  # 抽出に失敗した (ファイル, 種別) の数
+    error_details: list[tuple[str, str, str]] = field(default_factory=list)  # 失敗の (相対パス, 種別, メッセージ)
     by_kind: dict[str, int] = field(default_factory=dict)  # 種別ごとの成功件数(引き継ぎを含む)
     cancelled: bool = False  # 途中でキャンセルされた(DB には取得済みの分だけが入っている)
 
@@ -258,15 +259,18 @@ def _build(files_db_path, work: WorkDb, scan_root, settings, previous, progress,
                 else:
                     stats.processed += 1
                     directory = db.dir_path(parent_id)
-                    path = _real_path(root, f"{directory}\\{name}" if directory else name)
+                    rel_path = f"{directory}\\{name}" if directory else name
+                    path = _real_path(root, rel_path)
                     for extractor in remaining:
                         writer = EntryWriter(entry_id, extractor.kind)
                         try:
                             extractor.extract(path, writer)
                         except Exception as error:  # noqa: BLE001 - ロック中・破損などはファイル単位で記録して続行
                             detail = str(error) or getattr(error, "strerror", "") or ""
-                            write_error(conn, entry_id, extractor.kind, f"{type(error).__name__}: {detail}"[:500])
+                            message = f"{type(error).__name__}: {detail}"[:500]
+                            write_error(conn, entry_id, extractor.kind, message)
                             stats.errors += 1
+                            stats.error_details.append((rel_path, extractor.kind, message))
                         else:
                             write_result(conn, writer)
                             stats.by_kind[extractor.kind] += 1

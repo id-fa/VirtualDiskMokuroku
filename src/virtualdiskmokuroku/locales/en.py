@@ -72,6 +72,17 @@ STRINGS: dict[str, str] = {
         "{root}  {0:<16} {filesystem:<6} {serial}  {drive_type:<9} free {free_bytes} / {total_bytes}  [{bus_type}] {device}",
     "拡張コンテキスト: 取得 {processed:,} 件 / 引き継ぎ {reused:,} 件 / エラー {errors:,} 件":
         "Extended context: extracted {processed:,} / reused {reused:,} / errors {errors:,}",
+    "エラー: {detail}": "Error: {detail}",
+    "…他 {count:,} 件": "... and {count:,} more",
+    "エラーの一覧をログに書きました: {path}": "The list of errors was written to the log: {path}",
+    "==== {stamp}  {name} ({root})  拡張コンテキストのエラー {count:,} 件":
+        "==== {stamp}  {name} ({root})  extended context errors: {count:,}",
+    "エラーの詳細(&E)...": "Error &details...",
+    "エラーになったファイルは「エラーの詳細」ボタンで確認できます。": 'Use the "Error details" button to see which files failed.',
+    "拡張コンテキストのエラー": "Extended context errors",
+    "抽出に失敗したファイル ({count:,} 件):": "Files whose extraction failed ({count:,}):",
+    "ログファイル: {path}": "Log file: {path}",
+    "暗号化カタログでは、ファイル名を含むログは書きません。": "For an encrypted catalog, no log containing file names is written.",
     "警告: {warning}": "Warning: {warning}",
     "追加: {name}  ファイル {file_count:,} / フォルダ {dir_count:,} / 合計 {total_size}":
         "Added: {name}  files {file_count:,} / folders {dir_count:,} / total {total_size}",

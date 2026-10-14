@@ -2,32 +2,78 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sqlite3
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from .core import scanner
 from .core.catalog import CONTEXT_DB, FILES_DB, Catalog
 from .core.drive_db import ProgressCallback
 from .core.es_client import EsClient
 from .core.ignore import IgnoreRules
+from .core.settings import app_data_dir
 from .core.workdb import open_shared_memory_db, remove_quietly
 from .i18n import tr
+
+if TYPE_CHECKING:
+    from .context.runner import ContextStats
+
+CONTEXT_ERROR_LOG = "context-errors.log"
 
 
 @dataclass(slots=True)
 class ScanOutcome:
     drive: dict  # カタログ上のドライブ情報
     result: scanner.ScanResult
-    context_stats: object | None = None  # context.runner.ContextStats (拡張コンテキスト無効時は None)
+    context_stats: ContextStats | None = None  # 拡張コンテキスト無効時は None
+    error_log: Path | None = None  # 拡張コンテキストのエラー一覧を追記したログファイル (無ければ None)
+    scan_root: str = ""  # スキャンした場所 (エラー一覧のパスを組むのに使う)
 
 
 def enabled_context_settings(catalog: Catalog) -> dict:
     """有効な拡張コンテキスト設定だけを返す(1 つも無ければ空)。"""
     return {kind: params for kind, params in catalog.settings.get("context", {}).items() if params.get("enabled")}
+
+
+def context_error_log_path() -> Path:
+    """拡張コンテキストのエラーログの場所 (%APPDATA%\\VirtualDiskMokuroku\\logs\\context-errors.log)。"""
+    return app_data_dir() / "logs" / CONTEXT_ERROR_LOG
+
+
+def format_context_errors(stats: ContextStats, root: str) -> list[str]:
+    """抽出に失敗したファイルを 1 件 1 行 (フルパス  [種別]  エラー) で返す。"""
+    from .context import EXTRACTORS
+
+    labels = {kind: tr(cls.label) for kind, cls in EXTRACTORS.items()}
+    root = os.path.abspath(root)
+    return [
+        f"{os.path.join(root, rel_path)}  [{labels.get(kind, kind)}]  {message}"
+        for rel_path, kind, message in stats.error_details
+    ]
+
+
+def write_context_error_log(stats: ContextStats, root: str, drive_name: str) -> Path:
+    """抽出に失敗したファイルの一覧をログファイルに追記し、その場所を返す。
+
+    実ファイルのパスを書くので、暗号化カタログでは呼ばない (``scan_into_catalog`` が判断する)。
+    """
+    path = context_error_log_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    root = os.path.abspath(root)
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    header = tr('==== {stamp}  {name} ({root})  拡張コンテキストのエラー {count:,} 件').format(stamp=stamp, name=drive_name, root=root, count=stats.errors)
+    with open(path, "a", encoding="utf-8") as stream:
+        stream.write(header + "\n")
+        for line in format_context_errors(stats, root):
+            stream.write(line + "\n")
+        stream.write("\n")
+    return path
 
 
 def scan_into_catalog(
@@ -125,7 +171,13 @@ def scan_into_catalog(
             context_db_path=context_db,
             context_partial=bool(context_stats and context_stats.cancelled),
         )
-        return ScanOutcome(drive, result, context_stats)
+        error_log = None
+        if context_stats is not None and context_stats.errors and not secure:  # 暗号化カタログではファイル名を外に書かない
+            try:
+                error_log = write_context_error_log(context_stats, root, drive["name"])
+            except OSError:
+                error_log = None  # ログが書けなくてもスキャン結果は有効
+        return ScanOutcome(drive, result, context_stats, error_log, root)
     finally:
         if memory_owner is not None:
             memory_owner.close()

@@ -168,6 +168,8 @@ def test_build_and_read(built):
     assert events[-1] == ("context", 10)
     assert stats.processed == 10 and stats.reused == 0
     assert stats.errors == 2  # broken.jpg の exif と thumbnail
+    assert [(path, kind) for path, kind, _message in stats.error_details] == [("broken.jpg", "exif"), ("broken.jpg", "thumbnail")]
+    assert all(message for _path, _kind, message in stats.error_details)
     assert stats.by_kind == {"exif": 1, "office": 1, "audio": 1, "text": 3, "thumbnail": 2, "archive": 2, "iso": 0}
 
     with ContextDB(context_db) as ctx:
@@ -317,15 +319,29 @@ def test_scan_root_can_differ_and_only_enabled_kinds_run(built, tmp_path):
         assert ctx.summary() == {}
 
 
-def test_missing_files_are_recorded_as_errors(built, tmp_path):
+def test_missing_files_are_recorded_as_errors(built, tmp_path, monkeypatch):
     _tree, files_db, _context_db, _stats, _events = built
     context_db = tmp_path / "offline.db"
     settings = default_context_settings()
     settings["text"]["enabled"] = True
-    stats = build_context_db(files_db, context_db, str(tmp_path / "does_not_exist"), settings)
+    root = str(tmp_path / "does_not_exist")
+    stats = build_context_db(files_db, context_db, root, settings)
     assert stats.errors == 3 and stats.by_kind == {"text": 0}
     with ContextDB(context_db) as ctx:
         assert len(ctx.errors()) == 3 and len(ctx.errors(limit=1)) == 1
+
+    # エラーの一覧は 1 件 1 行 (フルパス・種別・エラー) で表示でき、ログファイルに追記できる
+    from virtualdiskmokuroku.pipeline import context_error_log_path, format_context_errors, write_context_error_log
+
+    lines = format_context_errors(stats, root)
+    assert len(lines) == 3 and all(line.startswith(root + os.sep) and "[テキスト本文]" in line for line in lines)
+    assert any("notes_utf8.txt" in line and "FileNotFoundError" in line for line in lines)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    log_path = write_context_error_log(stats, root, "ドライブX")
+    assert log_path == context_error_log_path() == tmp_path / "appdata" / "VirtualDiskMokuroku" / "logs" / "context-errors.log"
+    write_context_error_log(stats, root, "ドライブX")  # 2 回目は追記
+    text = log_path.read_text(encoding="utf-8")
+    assert text.count("ドライブX") == 2 and text.count("拡張コンテキストのエラー 3 件") == 2 and text.count(lines[0]) == 2
 
 
 def test_cancel_keeps_results_obtained_so_far(built, tmp_path):

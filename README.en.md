@@ -46,7 +46,7 @@ After `pip install -e .`, the `virtualdiskmokuroku` command starts it as well.
 | Organize drives | Drive → Organize drives. Reorder drives and move them between groups by drag & drop (or "Up / Down"), delete several drives at once, or remove only the extended context (thumbnails, text content, etc.). Order, group changes and deletions are written to the catalog together when you press OK |
 | Copy drives to another catalog | Select drives in "Organize drives" and press "Copy to another catalog". Choosing an existing catalog adds them to it; a new file name creates a new catalog (works across encrypted and unencrypted catalogs; backups are not copied) |
 | Backups | Keeps the previous database inside the catalog when a drive is updated (1 generation by default). Drive → Restore from backup |
-| Saving / discarding changes | Changes are written to a working copy (`<name>.vdmoku.editing`) in the catalog's folder and applied to the catalog with File → Save catalog (Ctrl+S). "Revert unsaved changes" returns to the last saved state. When closing or opening another catalog, you are asked whether to save or discard. Turn on "Save changes to the catalog immediately (auto-save)" in Settings → Application settings to write every change to the catalog right away |
+| Saving / discarding changes | Changes are written to a working copy (`<name>.vdmoku.editing`) in the catalog's folder and applied to the catalog with File → Save catalog (Ctrl+S). "Revert unsaved changes" returns to the last saved state. When closing or opening another catalog (including by dropping a `.vdmoku` file onto the window), you are asked whether to save or discard. Turn on "Save changes to the catalog immediately (auto-save)" in Settings → Application settings to write every change to the catalog right away |
 | Catalog encryption | Choose it when creating a catalog, or Settings → Catalog settings → Encryption / password |
 | Ignore list, extended context | Settings → Catalog settings (stored per catalog) |
 | Migration from Virtual CD-ROM Case (alpha) | File → Import catalog from another application and choose a `.cas` / `.caz` file (compressed files are fine; see [details](#importing-virtual-cd-rom-case-catalogs-alpha)) |
@@ -80,6 +80,9 @@ before this feature existed, updating (rescanning) the drive re-reads the thumbn
 A rescan reuses the results of files that have not changed since the last scan, so they are not read again.
 If you cancel while the extended context is being read, what was read so far is registered; the next update of
 that drive reads only the remaining files (cancelling while the file list is being read registers nothing).
+Files that could not be read (damaged, locked, unsupported format, etc.) are counted as "errors" in the scan result,
+and the "Error details" button in the scan dialog lists them. The list is also appended to
+`%APPDATA%\VirtualDiskMokuroku\logs\context-errors.log` (not for encrypted catalogs, so that file names do not leave the catalog).
 
 ### Catalog encryption
 

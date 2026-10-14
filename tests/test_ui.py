@@ -163,7 +163,7 @@ def test_context_scan_search_and_redecode(window, tmp_path):
 
     outcome = {}
     worker = ScanWorker(catalog, str(tree), None, "コンテキスト", scanner.SOURCE_WALK, None)
-    worker.succeeded.connect(lambda drive, result, stats: outcome.update(drive=drive, stats=stats))
+    worker.succeeded.connect(lambda done: outcome.update(drive=done.drive, stats=done.context_stats))
     worker.failed.connect(lambda message: outcome.update(error=message))
     worker.start()
     assert wait_until(lambda: worker.isFinished() and outcome, timeout=20), outcome
@@ -203,7 +203,7 @@ def test_context_scan_search_and_redecode(window, tmp_path):
     # 再スキャン (更新) では前回の抽出結果を引き継ぐ
     outcome.clear()
     worker = ScanWorker(catalog, str(tree), drive["id"], "", scanner.SOURCE_WALK, None)
-    worker.succeeded.connect(lambda drive, result, stats: outcome.update(drive=drive, stats=stats))
+    worker.succeeded.connect(lambda done: outcome.update(drive=done.drive, stats=done.context_stats))
     worker.failed.connect(lambda message: outcome.update(error=message))
     window._close_databases()
     worker.start()
@@ -236,7 +236,7 @@ def test_cancel_during_context_registers_partial_results(window, tmp_path):
 
         # 進捗はワーカースレッドから直接受け取り、決まった位置でキャンセルする
         worker.progress.connect(on_progress, Qt.ConnectionType.DirectConnection)
-        worker.succeeded.connect(lambda drive, result, stats: outcome.update(drive=drive, stats=stats))
+        worker.succeeded.connect(lambda done: outcome.update(drive=done.drive, stats=done.context_stats))
         worker.failed.connect(lambda message: outcome.update(error=message))
         worker.start()
         assert wait_until(lambda: worker.isFinished() and outcome, timeout=20), outcome
@@ -415,7 +415,7 @@ def test_encrypted_catalog_leaves_no_plaintext_on_disk(window, tmp_path, monkeyp
     def scan(drive_id):
         outcome = {}
         worker = ScanWorker(catalog, str(tree), drive_id, "秘密", scanner.SOURCE_WALK, None)
-        worker.succeeded.connect(lambda drive, result, stats: outcome.update(drive=drive, stats=stats, result=result))
+        worker.succeeded.connect(lambda done: outcome.update(drive=done.drive, stats=done.context_stats, result=done.result))
         worker.failed.connect(lambda message: outcome.update(error=message))
         worker.start()
         assert wait_until(lambda: worker.isFinished() and outcome, timeout=30), outcome
@@ -977,6 +977,106 @@ def test_organize_dialog(window, tmp_path, monkeypatch):
     assert window.tree_model.rowCount() == 2 and window.tree_model.item(1).data(MAIN_ROLE_GROUP) == "保管"
     assert window._current_drive()["id"] == two
     assert wait_until(lambda: "only_in_two.txt" in names(window))
+
+
+def test_drop_catalog_file_opens_it(window, tmp_path, monkeypatch):
+    """ウィンドウに .vdmoku をドロップすると開く。未保存の変更があれば、閉じるときと同じ保存確認を出す。"""
+    from PySide6.QtCore import QMimeData, QPoint, QPointF, QUrl
+    from PySide6.QtGui import QDragEnterEvent, QDropEvent
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    def mime_for(*paths):
+        mime = QMimeData()
+        mime.setUrls([QUrl.fromLocalFile(str(path)) for path in paths])
+        return mime
+
+    def drag_enter(mime):
+        event = QDragEnterEvent(QPoint(10, 10), Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        window.dragEnterEvent(event)
+        return event.isAccepted()
+
+    def drop(mime):
+        event = QDropEvent(QPointF(10, 10), Qt.DropAction.CopyAction, mime, Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier)
+        window.dropEvent(event)
+        return event.isAccepted()
+
+    first = window.catalog
+    other = Catalog.create(tmp_path / "other.vdmoku")
+    legacy = tmp_path / "legacy.pmcat"
+    legacy.write_bytes(other.path.read_bytes())
+    (tmp_path / "note.txt").write_text("x")
+
+    # カタログ以外、複数ファイル、は受け付けない
+    assert not drag_enter(mime_for(tmp_path / "note.txt"))
+    assert not drag_enter(mime_for(other.path, legacy))
+    assert not drag_enter(QMimeData())
+    assert drag_enter(mime_for(other.path)) and drag_enter(mime_for(legacy))
+    assert not drop(mime_for(tmp_path / "note.txt")) and window.catalog is first
+
+    assert drop(mime_for(other.path))
+    assert wait_until(lambda: window.catalog is not None and window.catalog.path == other.path)
+    assert window.catalog.drives == []
+
+    # 旧拡張子も開ける
+    assert drop(mime_for(legacy))
+    assert wait_until(lambda: window.catalog is not None and window.catalog.path == legacy)
+
+    # 未保存の変更がある状態でドロップ → 確認でキャンセルすると開かない、破棄すると開く
+    assert window.open_catalog(first.path)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("名前D", True))
+    window.rename_current_drive()
+    assert window.catalog.modified
+    answers = [QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Discard]
+    monkeypatch.setattr(QMessageBox, "exec", lambda self: answers.pop(0))
+    assert drop(mime_for(other.path))
+    assert wait_until(lambda: not answers or len(answers) == 1)
+    QCoreApplication.processEvents()
+    assert window.catalog.path == first.path and window.catalog.modified and len(answers) == 1
+    assert drop(mime_for(other.path))
+    assert wait_until(lambda: window.catalog is not None and window.catalog.path == other.path)
+    assert not answers and Catalog.open(first.path).drives[0]["name"] == "ドライブone"
+
+
+def test_scan_dialog_shows_context_errors(window, tmp_path, monkeypatch):
+    """拡張コンテキストのエラーがあると「エラーの詳細」ボタンが出て、失敗したファイルの一覧を表示できる。"""
+    pytest.importorskip("virtualdiskmokuroku.context")
+    from types import SimpleNamespace
+
+    from PySide6.QtWidgets import QDialog, QPlainTextEdit
+
+    from virtualdiskmokuroku.context.runner import ContextStats
+    from virtualdiskmokuroku.pipeline import ScanOutcome
+    from virtualdiskmokuroku.ui.scan_dialog import ScanDialog
+
+    dialog = ScanDialog(window.catalog, window.app_settings, window)
+    assert dialog._errors_button.isHidden()
+    stats = ContextStats(processed=2, errors=1, error_details=[("sub\\broken.jpg", "exif", "OSError: broken")])
+    counts = SimpleNamespace(file_count=2, dir_count=1, total_size=10, ignored_count=0)
+    result = SimpleNamespace(source=scanner.SOURCE_WALK, stats=counts, warnings=[])
+    outcome = ScanOutcome({"id": "d1", "name": "テスト"}, result, stats, tmp_path / "ctx.log", "F:\\")
+    dialog._on_succeeded(outcome)
+    assert not dialog._errors_button.isHidden()
+    assert dialog._error_lines == ["F:\\sub\\broken.jpg  [EXIF 情報]  OSError: broken"]
+    assert "エラーの詳細" in dialog._status.text() and str(tmp_path / "ctx.log") in dialog._status.text()
+
+    shown = {}
+
+    def fake_exec(self):
+        shown["text"] = self.findChild(QPlainTextEdit).toPlainText()
+        shown["labels"] = [label.text() for label in self.findChildren(QLabel)]
+        return 0
+
+    monkeypatch.setattr(QDialog, "exec", fake_exec)
+    dialog._show_errors()
+    assert shown["text"] == "F:\\sub\\broken.jpg  [EXIF 情報]  OSError: broken"
+    assert any("1 件" in text for text in shown["labels"]) and any(str(tmp_path / "ctx.log") in text for text in shown["labels"])
+
+    # 暗号化カタログなどでログが無い場合は、その旨を表示する
+    dialog._on_succeeded(ScanOutcome({"id": "d1", "name": "テスト"}, result, stats, None, "F:\\"))
+    assert "ログ" not in dialog._status.text()
+    dialog._show_errors()
+    assert any("ログは書きません" in text for text in shown["labels"])
+    dialog.deleteLater()
 
 
 def test_deferred_save_prompts_on_close(window, tmp_path, monkeypatch):
