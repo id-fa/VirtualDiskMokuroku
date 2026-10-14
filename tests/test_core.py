@@ -541,3 +541,38 @@ def test_deferred_encryption_is_reverted_by_discard(tmp_path, scanned):
     catalog.commit()
     assert Catalog.is_encrypted_file(catalog_path) and not catalog.work_path.exists()
     assert Catalog.open(catalog_path, "合言葉", cache_root=cache).drives[0]["name"] == "A"
+
+
+def test_walk_replaces_lone_surrogates_in_names(tmp_path):
+    """NTFS は名前に UTF-16 として不正な文字 (対になっていないサロゲート) を許す。直接走査ではその文字を
+    U+FFFD に置き換えて登録し、元のパスを警告で知らせる (置き換えないと SQLite への書き込みで落ちる)。"""
+    import sqlite3
+
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    (tree / "ok.txt").write_bytes(b"1")
+    try:
+        (tree / "bad\udf2dname.txt").write_bytes(b"22")
+        folder = tree / "dir\udc80"
+        folder.mkdir()
+    except (OSError, UnicodeEncodeError):
+        pytest.skip("このファイルシステムでは不正なサロゲートを含む名前を作れない")
+    (folder / "child.txt").write_bytes(b"333")
+
+    db_path = tmp_path / "files.db"
+    result = scanner.scan_to_db(str(tree), db_path, source=scanner.SOURCE_WALK)
+    assert (result.stats.file_count, result.stats.dir_count, result.stats.total_size) == (3, 1, 6)
+    with sqlite3.connect(db_path) as conn:
+        names = sorted(name for (name,) in conn.execute("SELECT name FROM entries WHERE id != ?", (ROOT_ID,)))
+    assert names == ["bad\ufffdname.txt", "child.txt", "dir\ufffd", "ok.txt"]
+    # 警告は \udf2d のような表記で元のパスを示し、UTF-8 として扱える
+    (warning,) = [warning for warning in result.warnings if "不正な文字" in warning]
+    assert "2 件" in warning and ("bad\\udf2dname.txt" in warning or "dir\\udc80" in warning)
+    warning.encode("utf-8")
+
+
+def test_build_drive_db_names_the_entry_that_cannot_be_encoded(tmp_path):
+    """取得側で置き換えられなかった場合も、どのパスで失敗したかが分かる例外にする。"""
+    entries = [RawEntry("D:\\ok.txt", False, 1, None, None, 32), RawEntry("D:\\x\\bad\udf2d.txt", False, 1, None, None, 32)]
+    with pytest.raises(ValueError, match=r"D:\\x\\bad\\udf2d\.txt"):
+        build_drive_db(tmp_path / "files.db", "D:\\", entries)

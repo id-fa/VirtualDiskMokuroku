@@ -34,26 +34,58 @@ def _filetime(ns: int | None) -> int | None:
     return ns // 100 + _FILETIME_EPOCH_OFFSET
 
 
+def has_lone_surrogates(text: str) -> bool:
+    """UTF-16 として不正な文字 (対になっていないサロゲート) を含むかどうか。
+
+    NTFS は名前に任意の 16 ビット値を許すので、``os.scandir`` が返す名前にそのまま入ってくることがある。
+    そのままでは UTF-8 に変換できず、SQLite や JSON への書き込みで ``UnicodeEncodeError`` になる。
+    """
+    if text.isascii():
+        return False
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return True
+    return False
+
+
+def replace_lone_surrogates(text: str) -> str:
+    """不正な文字を U+FFFD (置換文字) に置き換える。Everything の一覧と同じ扱いになる。"""
+    # UTF-8 の encode の "replace" は "?" にしてしまうので、UTF-16 を経由して decode 側で置き換える
+    return text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
+
+
+def readable_path(text: str) -> str:
+    """不正な文字を ``\\udf2d`` のような表記にした、表示・ログ用の文字列。"""
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 def walk_entries(
     root: str,
     ignore: IgnoreRules | None = None,
     is_cancelled: Callable[[], bool] | None = None,
     errors: list[str] | None = None,
+    renamed: list[str] | None = None,
 ) -> Iterator[RawEntry]:
-    """``os.scandir`` で ``root`` 以下を走査する。無視対象のフォルダには降りない。"""
+    """``os.scandir`` で ``root`` 以下を走査する。無視対象のフォルダには降りない。
+
+    名前に Unicode として不正な文字を含むエントリは、その文字を U+FFFD に置き換えて返し、
+    元のパスを ``renamed`` に記録する (置き換えずに返すと DB へ書けない)。
+    """
     root = os.path.abspath(root)
     prefix_len = len(root.rstrip("\\")) + 1
     uses_paths = bool(ignore and ignore.uses_paths)
-    pending = [root]
+    # (走査するフォルダの実際のパス, そのパスに不正な文字が含まれるか)
+    pending: list[tuple[str, bool]] = [(root, has_lone_surrogates(root))]
     while pending:
         if is_cancelled is not None and is_cancelled():
             raise ScanCancelled()
-        directory = pending.pop()
+        directory, dir_tainted = pending.pop()
         try:
             iterator = os.scandir(directory)
         except OSError as error:
             if errors is not None:
-                errors.append(f"{directory}: {error.strerror or error}")
+                errors.append(f"{readable_path(directory)}: {error.strerror or error}")
             continue
         with iterator:
             while True:
@@ -63,7 +95,7 @@ def walk_entries(
                     break
                 except OSError as error:
                     if errors is not None:
-                        errors.append(f"{directory}: {error.strerror or error}")
+                        errors.append(f"{readable_path(directory)}: {error.strerror or error}")
                     break
                 try:
                     stat = item.stat(follow_symlinks=False)
@@ -71,12 +103,16 @@ def walk_entries(
                     is_dir = item.is_dir(follow_symlinks=False) or bool(attrs & 0x10)
                 except OSError as error:
                     if errors is not None:
-                        errors.append(f"{item.path}: {error.strerror or error}")
+                        errors.append(f"{readable_path(item.path)}: {error.strerror or error}")
                     continue
                 if ignore and ignore.matches(item.name, is_dir, item.path[prefix_len:] if uses_paths else None):
                     continue
+                name_tainted = has_lone_surrogates(item.name)
+                tainted = dir_tainted or name_tainted
+                if name_tainted and renamed is not None:
+                    renamed.append(readable_path(item.path))
                 yield RawEntry(
-                    path=item.path,
+                    path=replace_lone_surrogates(item.path) if tainted else item.path,
                     is_dir=is_dir,
                     size=None if is_dir else stat.st_size,
                     mtime=_filetime(stat.st_mtime_ns),
@@ -85,7 +121,7 @@ def walk_entries(
                 )
                 # ジャンクション/シンボリックリンクの先は辿らない(Everything の一覧と同じ扱い)
                 if is_dir and not attrs & _FILE_ATTRIBUTE_REPARSE_POINT:
-                    pending.append(item.path)
+                    pending.append((item.path, tainted))
 
 
 @dataclass(slots=True)
@@ -153,11 +189,12 @@ def scan_to_db(
         progress("source:" + chosen, 0)
 
     walk_errors: list[str] = []
+    renamed: list[str] = []
     if chosen == SOURCE_EVERYTHING:
         assert es is not None
         entries = es.iter_entries(root, with_ctime=with_ctime, with_attrs=with_attrs, is_cancelled=is_cancelled)
     else:
-        entries = walk_entries(root, ignore, is_cancelled, walk_errors)
+        entries = walk_entries(root, ignore, is_cancelled, walk_errors, renamed)
 
     scanned_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     meta = {f"volume_{key}": value for key, value in volume.to_dict().items()}
@@ -179,4 +216,8 @@ def scan_to_db(
         database, stats = build_drive_db_in_memory(root, entries, memory_limit=memory_limit, spill_dir=spill_dir, **common)
     if walk_errors:
         warnings.append(tr('読み取れなかったフォルダ/ファイルが {walk_errors_count} 件あります(例: {0})').format(walk_errors[0], walk_errors_count=len(walk_errors)))
+    if renamed:
+        warnings.append(
+            tr('名前に Unicode として不正な文字を含むフォルダ/ファイルが {count} 件あり、その文字を「�」に置き換えて登録しました(例: {0})').format(", ".join(renamed[:5]), count=len(renamed))
+        )
     return ScanResult(root, chosen, stats, volume, scanned_at, meta, warnings, database)

@@ -234,6 +234,10 @@ STRINGS: dict[str, str] = {
     "ドライブ {root} の準備ができていません(メディア未挿入など)": "Drive {root} is not ready (no media inserted, etc.)",
     "読み取れなかったフォルダ/ファイルが {walk_errors_count} 件あります(例: {0})":
         "{walk_errors_count} folder(s)/file(s) could not be read (e.g. {0})",
+    "名前に Unicode として不正な文字を含むフォルダ/ファイルが {count} 件あり、その文字を「�」に置き換えて登録しました(例: {0})":
+        "{count} folder(s)/file(s) have names with characters that are invalid in Unicode; those characters were replaced with \"�\" (e.g. {0})",
+    "名前に Unicode として不正な文字を含むため登録できません: {path}":
+        "Cannot register a name containing characters that are invalid in Unicode: {path}",
     "Everything を利用できないため、直接走査で取得しました ({error})": "Everything was unavailable, so the file list was read by direct scan ({error})",
     # ------------------------------------------------------------------ core: Virtual CD-ROM Case
     "データが途中で終わっています": "The data ends unexpectedly",

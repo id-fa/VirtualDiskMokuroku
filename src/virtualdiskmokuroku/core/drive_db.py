@@ -19,6 +19,7 @@ from .errors import ScanCancelled
 from .es_client import FILE_ATTRIBUTE_DIRECTORY, RawEntry
 from .ignore import IgnoreRules
 from .workdb import WorkDb, keep_temp_in_memory, remove_quietly
+from ..i18n import tr
 
 SCHEMA_VERSION = 1
 ROOT_ID = 0
@@ -159,7 +160,19 @@ def _build(out: WorkDb, stage: WorkDb, root, entries, ignore, meta, progress, is
     def flush_stage() -> None:
         nonlocal staged
         stage.conn.execute("BEGIN")
-        stage.conn.executemany("INSERT INTO raw VALUES (?,?,?,?,?,?)", batch)
+        try:
+            stage.conn.executemany("INSERT INTO raw VALUES (?,?,?,?,?,?)", batch)
+        except UnicodeEncodeError as error:
+            # SQLite は文字列を UTF-8 で保存するので、対になっていないサロゲートを含む名前は書けない。
+            # 通常は取得側 (walk_entries) で置き換えているが、万一ここまで来たらどのパスかを示して失敗させる
+            stage.conn.execute("ROLLBACK")
+            for row in batch:
+                try:
+                    row[0].encode("utf-8")
+                except UnicodeEncodeError:
+                    readable = row[0].encode("utf-8", "backslashreplace").decode("utf-8").replace(_SEP, "\\")
+                    raise ValueError(tr('名前に Unicode として不正な文字を含むため登録できません: {path}').format(path=prefix + readable)) from error
+            raise
         stage.conn.execute("COMMIT")
         stage.checkpoint()
         staged += len(batch)
