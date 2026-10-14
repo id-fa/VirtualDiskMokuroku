@@ -8,6 +8,11 @@
     drives/<drive_id>/backup/<stamp>/files.db (旧世代)
 
 更新は常に一時ファイルへ書き出してから ``os.replace`` で差し替えるので、途中で失敗しても元のカタログは壊れない。
+一時ファイル名 (``.<PID>.tmp``、キャッシュ展開の ``.<PID>.part``) にはプロセス ID を付け、別のインスタンスと衝突しない。
+
+開くときは ``core.lockfile`` で排他ロック (``<名前>.vdmoku.lock``) を取り、別のプロセスが同じカタログを開いていれば
+``CatalogLockedError`` にする (各インスタンスが manifest をメモリに持つので、同時に書き換えると互いの変更を失う)。
+読むだけなら ``lock=False`` で開ける。ロックは ``close()`` で返す。
 
 ``deferred`` を立てると、変更はカタログ本体ではなく同じフォルダの作業用コピー (``<名前>.vdmoku.editing``) に書き、
 ``commit()`` で本体に差し替えるか ``discard()`` で捨てるまで本体は変わらない (GUI の「自動保存」オフの動作)。
@@ -42,7 +47,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import crypto
+from . import crypto, lockfile
 from .drive_db import DriveDB, readonly_uri
 from .errors import CatalogError, PasswordError
 from .ignore import DEFAULT_IGNORE
@@ -236,6 +241,12 @@ class Catalog:
         self.deferred = False  # True なら変更を作業用コピーに書き、commit() するまで本体に反映しない
         self._file = self.path  # 実際に読み書きしているファイル (保留中の変更があれば作業用コピー)
         self._pristine = self._snapshot()  # 本体の内容に対応する manifest と鍵 (discard() で戻す)
+        self._locked = False  # 排他ロックを取っている (close() で返す)
+
+    def _acquire_lock(self) -> None:
+        """別のプロセスで開かれていれば ``CatalogLockedError``。ロックファイルを作れない場所では何もしない。"""
+        lockfile.acquire(self.path)
+        self._locked = True
 
     # ------------------------------------------------------------------ 生成・オープン
     @classmethod
@@ -247,10 +258,12 @@ class Catalog:
         *,
         encrypt: bool = False,
         kdf: dict | None = None,
+        lock: bool = True,
     ) -> Catalog:
         """新しいカタログを作る。``encrypt=True`` なら ``password`` で暗号化する。
 
         ``encrypt=False`` で ``password`` を渡した場合は、開くときに照合するだけの保護(暗号化なし)になる。
+        ``lock`` が真なら排他ロックを取る (``open`` と同じ)。
         """
         manifest = {
             "format": FORMAT_NAME,
@@ -269,7 +282,13 @@ class Catalog:
         catalog = cls(path, manifest, cache_root, data_key=data_key, key_record=key_record)
         if catalog.path.exists():
             raise CatalogError(tr('既にファイルが存在します: {path}').format(path=catalog.path))
-        catalog._rewrite()
+        if lock:
+            catalog._acquire_lock()
+        try:
+            catalog._rewrite()
+        except BaseException:
+            catalog.close()
+            raise
         return catalog
 
     @staticmethod
@@ -297,7 +316,14 @@ class Catalog:
         return bool(manifest.get("encryption") or manifest.get("settings", {}).get("password"))
 
     @classmethod
-    def open(cls, path: str | os.PathLike[str], password: str | None = None, cache_root: Path | None = None) -> Catalog:
+    def open(
+        cls, path: str | os.PathLike[str], password: str | None = None, cache_root: Path | None = None, *, lock: bool = True
+    ) -> Catalog:
+        """カタログを開く。``lock`` が真なら排他ロックを取り、別のプロセスで開かれていれば ``CatalogLockedError``。
+
+        同じプロセスで同じカタログを重ねて開くのは許される。読むだけの用途 (CLI の一覧・検索) は ``lock=False`` で、
+        他のインスタンスが開いているカタログも読める。
+        """
         manifest = cls.read_manifest(path)
         data_key = None
         key_record = manifest.get("encryption")
@@ -325,7 +351,10 @@ class Catalog:
                 raise PasswordError(tr('このカタログはパスワードで保護されています'))
             if not verify_password(record, password):
                 raise PasswordError(tr('パスワードが違います'))
-        return cls(path, manifest, cache_root, data_key=data_key, key_record=key_record)
+        catalog = cls(path, manifest, cache_root, data_key=data_key, key_record=key_record)
+        if lock:
+            catalog._acquire_lock()
+        return catalog
 
     # ------------------------------------------------------------------ 基本情報
     @property
@@ -558,10 +587,16 @@ class Catalog:
             if target.is_file() and target.stat().st_size == info.file_size:
                 return target
             target.parent.mkdir(parents=True, exist_ok=True)
-            partial = target.with_name(target.name + ".part")
+            partial = target.with_name(f"{target.name}.{os.getpid()}.part")  # 別のインスタンスと同時に展開しても混ざらない
             with archive.open(info) as source, open(partial, "wb") as destination:
                 shutil.copyfileobj(source, destination, _COPY_CHUNK)
-            os.replace(partial, target)
+            try:
+                os.replace(partial, target)
+            except OSError:
+                # 別のインスタンスが同じものを先に展開して開いている (Windows では開いているファイルを差し替えられない)
+                remove_quietly(partial)
+                if not (target.is_file() and target.stat().st_size == info.file_size):
+                    raise
         self._prune_cache(target)
         return target
 
@@ -675,7 +710,11 @@ class Catalog:
                     self._session_dir = None
 
     def close(self) -> None:
+        """DB を解放し、排他ロックを返す。閉じたあとは使わない (2 回呼んでも害はない)。"""
         self.release_sources()
+        if self._locked:
+            self._locked = False
+            lockfile.release(self.path)
 
     def open_drive_db(self, drive_id: str, backup: str | None = None) -> DriveDB:
         return DriveDB(self.db_source(drive_id, FILES_DB, backup))
@@ -1115,7 +1154,7 @@ class Catalog:
         self.manifest["updated_at"] = _now()
         with self._lock:
             target = self._write_target()
-            temp_path = target.with_name(target.name + ".tmp")
+            temp_path = target.with_name(f"{target.name}.{os.getpid()}.tmp")
             try:
                 with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zout:
                     self._write_manifest(zout, self._data_key, self._key_record)
@@ -1144,7 +1183,7 @@ class Catalog:
         """全メンバーを暗号化(または復号)し直したカタログを ``target`` に書く。平文の一時ファイルは作らない。"""
         if (self._data_key is None) == (new_key is None):
             raise CatalogError(tr('暗号化の状態が変わらない変換はできません'))
-        temp_path = target.with_name(target.name + ".tmp")
+        temp_path = target.with_name(f"{target.name}.{os.getpid()}.tmp")
         try:
             with zipfile.ZipFile(temp_path, "w", zipfile.ZIP_DEFLATED) as zout, zipfile.ZipFile(self._file) as zin:
                 self._write_manifest(zout, new_key, new_record)

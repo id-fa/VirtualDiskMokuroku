@@ -25,13 +25,16 @@ _opened: list[Catalog] = []  # 終了時に閉じる(暗号化カタログの復
 _MAX_ERROR_LINES = 20  # 拡張コンテキストのエラーを標準エラーに出す上限 (残りはログファイルで)
 
 
-def _open_catalog(path: str, password: str | None, create: bool = False, encrypt: bool = False) -> Catalog:
+def _open_catalog(
+    path: str, password: str | None, create: bool = False, encrypt: bool = False, *, lock: bool = True
+) -> Catalog:
+    """カタログを開く (``create`` なら無いときに作る)。読むだけのコマンドは ``lock=False`` で、GUI で開いている最中でも読める。"""
     if create and not Path(path).exists():
         if encrypt and not password:
             raise CatalogError(tr('--encrypt には --password の指定が必要です'))
-        catalog = Catalog.create(path, password, encrypt=encrypt)
+        catalog = Catalog.create(path, password, encrypt=encrypt, lock=lock)
     else:
-        catalog = Catalog.open(path, password)
+        catalog = Catalog.open(path, password, lock=lock)
     _opened.append(catalog)
     return catalog
 
@@ -122,7 +125,7 @@ def cmd_import(args: argparse.Namespace) -> int:
 
 
 def cmd_list(args: argparse.Namespace) -> int:
-    catalog = _open_catalog(args.catalog, args.password)
+    catalog = _open_catalog(args.catalog, args.password, lock=False)
     if catalog.encrypted:
         print(tr('(暗号化カタログ)'))
     for drive in catalog.drives:
@@ -134,7 +137,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_find(args: argparse.Namespace) -> int:
-    catalog = _open_catalog(args.catalog, args.password)
+    catalog = _open_catalog(args.catalog, args.password, lock=False)
     terms = split_terms(" ".join(args.terms))
     count = 0
     for drive in catalog.drives:

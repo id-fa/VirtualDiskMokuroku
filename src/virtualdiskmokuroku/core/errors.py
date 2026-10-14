@@ -8,3 +8,7 @@ class CatalogError(Exception):
 
 class PasswordError(CatalogError):
     """パスワードが必要、または一致しない。"""
+
+
+class CatalogLockedError(CatalogError):
+    """カタログが別のプロセスで開かれている (排他ロックを取れない)。"""

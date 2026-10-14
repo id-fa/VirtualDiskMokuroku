@@ -444,7 +444,7 @@ class MainWindow(QMainWindow):
         self._close_databases()
         self._worker.close_all()
         if self.catalog is not None:
-            self.catalog.release_sources()
+            self.catalog.close()
         super().closeEvent(event)
 
     def _update_ui_state(self) -> None:
@@ -632,6 +632,8 @@ class MainWindow(QMainWindow):
 
     def _set_catalog(self, catalog: Catalog | None) -> None:
         self._close_databases()
+        if self.catalog is not None and self.catalog is not catalog:
+            self.catalog.close()  # 排他ロックを返す
         self.catalog = catalog
         if catalog is not None:
             catalog.memory_limit = self.app_settings.memory_limit_mb * 1024 * 1024

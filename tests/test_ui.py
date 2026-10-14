@@ -1037,6 +1037,33 @@ def test_drop_catalog_file_opens_it(window, tmp_path, monkeypatch):
     assert not answers and Catalog.open(first.path).drives[0]["name"] == "ドライブone"
 
 
+def test_locked_catalog_is_refused(window, tmp_path, monkeypatch):
+    """別のインスタンスが開いているカタログは開けず、理由を表示する。閉じるとロックは消える。"""
+    import json
+
+    from PySide6.QtWidgets import QMessageBox
+
+    first = window.catalog
+    lock_path = tmp_path / "ui.vdmoku.lock"
+    assert lock_path.exists() and json.loads(lock_path.read_text(encoding="utf-8"))["pid"] == os.getpid()
+
+    other = Catalog.create(tmp_path / "other.vdmoku")
+    other.close()
+    other_lock = tmp_path / "other.vdmoku.lock"
+    other_lock.write_text(json.dumps({"pid": 1, "started": 1, "host": "other-pc"}), encoding="utf-8")
+    messages = []
+    monkeypatch.setattr(QMessageBox, "critical", lambda parent, title, text: messages.append(text))
+    assert not window.open_catalog(other.path)
+    assert window.catalog is first and "other-pc" in messages[-1] and str(other_lock) in messages[-1]
+
+    # ロックを消せば開ける。閉じる (別のカタログに切り替える) とロックを返す
+    other_lock.unlink()
+    assert window.open_catalog(other.path)
+    assert window.catalog.path == other.path and other_lock.exists()
+    window.close_catalog()
+    assert window.catalog is None and not other_lock.exists()
+
+
 def test_scan_dialog_shows_context_errors(window, tmp_path, monkeypatch):
     """拡張コンテキストのエラーがあると「エラーの詳細」ボタンが出て、失敗したファイルの一覧を表示できる。"""
     pytest.importorskip("virtualdiskmokuroku.context")

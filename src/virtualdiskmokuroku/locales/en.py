@@ -197,6 +197,9 @@ STRINGS: dict[str, str] = {
     "並び順にすべてのドライブが含まれていません": "The new order does not include every drive",
     "カタログ内のエントリが途中で切れています: {filename}": "An entry in the catalog is truncated: {filename}",
     "既にファイルが存在します: {path}": "The file already exists: {path}",
+    "このカタログは別のインスタンスで開かれています (プロセス ID {pid}、{host})。そちらを閉じてから開き直してください。異常終了で残ったロックなら、このファイルを削除してください: {path}":
+        "This catalog is open in another instance (process ID {pid} on {host}). Close it there and try again. If the lock was left behind by a crash, delete this file: {path}",
+    "ロックファイルを取得できません: {path}": "Cannot acquire the lock file: {path}",
     "VirtualDiskMokuroku のカタログではありません: {path}": "Not a VirtualDiskMokuroku catalog: {path}",
     "バックアップが見つかりません: {stamp}": "Backup not found: {stamp}",
     "グループが見つかりません: {old_name}": "Group not found: {old_name}",

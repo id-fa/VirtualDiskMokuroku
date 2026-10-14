@@ -269,6 +269,77 @@ def test_update_without_backup_drops_stale_context(tmp_path, scanned):
         assert sorted(archive.namelist()) == ["drives/" + drive["id"] + "/" + FILES_DB, "manifest.json"]
 
 
+def test_catalog_lock(tmp_path, monkeypatch):
+    """同じカタログを別のプロセスで同時に開けない。同じプロセス内の重ね開きと、持ち主のいない古いロックは許す。"""
+    import json
+    import platform
+    import subprocess
+    import sys
+
+    from virtualdiskmokuroku.core import lockfile
+    from virtualdiskmokuroku.core.errors import CatalogLockedError
+
+    path = tmp_path / "locked.vdmoku"
+    lock_path = tmp_path / "locked.vdmoku.lock"
+    catalog = Catalog.create(path, cache_root=tmp_path / "cache")
+    owner = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert owner["pid"] == os.getpid() and owner["host"] == platform.node() and owner["started"]
+    again = Catalog.open(path, cache_root=tmp_path / "cache")  # 同じプロセスでは重ねて開ける
+    again.close()
+    assert lock_path.exists()  # 最初の 1 つがまだ開いている
+    catalog.close()
+    assert not lock_path.exists()
+    catalog.close()  # 2 回閉じても害はない
+
+    # 別の (生きている) プロセスのロック → 開けない。読むだけなら lock=False で開ける
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        started = lockfile.process_start_time(other.pid)
+        assert started
+        lock_path.write_text(json.dumps({"pid": other.pid, "started": started, "host": platform.node()}), encoding="utf-8")
+        with pytest.raises(CatalogLockedError, match=str(other.pid)):
+            Catalog.open(path, cache_root=tmp_path / "cache")
+        readonly = Catalog.open(path, cache_root=tmp_path / "cache", lock=False)
+        assert readonly.drives == []
+        readonly.close()
+        assert lock_path.exists() and json.loads(lock_path.read_text(encoding="utf-8"))["pid"] == other.pid
+        # 同じ PID でも開始時刻が違えば (PID の再利用) 古いロックとして引き継ぐ
+        lock_path.write_text(json.dumps({"pid": other.pid, "started": started + 1, "host": platform.node()}), encoding="utf-8")
+        reopened = Catalog.open(path, cache_root=tmp_path / "cache")
+        assert json.loads(lock_path.read_text(encoding="utf-8"))["pid"] == os.getpid()
+        reopened.close()
+    finally:
+        other.kill()
+        other.wait()
+
+    # プロセスが終わっていれば古いロックとして引き継ぐ。壊れたロックファイルも同じ
+    lock_path.write_text(json.dumps({"pid": other.pid, "started": started, "host": platform.node()}), encoding="utf-8")
+    Catalog.open(path, cache_root=tmp_path / "cache").close()
+    assert not lock_path.exists()
+    lock_path.write_text("garbage", encoding="utf-8")
+    Catalog.open(path, cache_root=tmp_path / "cache").close()
+    assert not lock_path.exists()
+
+    # 別のコンピューターのロックは確認できないので有効とみなす
+    lock_path.write_text(json.dumps({"pid": 1, "started": 1, "host": "other-pc"}), encoding="utf-8")
+    with pytest.raises(CatalogLockedError, match="other-pc"):
+        Catalog.open(path, cache_root=tmp_path / "cache")
+    lock_path.unlink()
+
+    # ロックファイルを作れない場所 (読み取り専用など) ではロック無しで開く
+    real_open = os.open
+
+    def deny(file, *args, **kwargs):
+        if str(file).endswith(".lock"):
+            raise PermissionError(13, "denied", str(file))
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", deny)
+    unlocked = Catalog.open(path, cache_root=tmp_path / "cache")
+    assert not lock_path.exists()
+    unlocked.close()
+
+
 def test_opens_catalog_created_under_old_name(tmp_path):
     import json
 
@@ -293,7 +364,7 @@ def test_failed_update_keeps_original(tmp_path, scanned):
     with pytest.raises(OSError):
         catalog.put_drive(tmp_path / "missing.db", result, drive_id=drive["id"])
     assert catalog_path.read_bytes() == before
-    assert not os.path.exists(str(catalog_path) + ".tmp")
+    assert not list(catalog_path.parent.glob("*.tmp"))
 
 
 def test_reorganize_and_copy_drives(tmp_path, scanned):
@@ -422,7 +493,7 @@ def test_deferred_save_commit_and_discard(tmp_path, scanned):
     with pytest.raises(OSError):
         reopened.put_drive(tmp_path / "missing.db", result, drive_id=drive["id"])
     assert reopened.work_path.read_bytes() == work_before
-    assert not os.path.exists(str(reopened.work_path) + ".tmp")
+    assert not list(reopened.work_path.parent.glob("*.tmp"))
 
 
 def test_deferred_encryption_is_reverted_by_discard(tmp_path, scanned):

@@ -219,6 +219,12 @@ While browsing, only the databases that are needed are extracted to `%LOCALAPPDA
 While auto-save is off, unsaved changes are written to `<name>.vdmoku.editing` in the same folder, and saving replaces
 the catalog with that file (a `.editing` file left behind by a crash can simply be deleted).
 
+While a catalog is open, `<name>.vdmoku.lock` is created in the same folder so that another instance (the GUI, or the
+CLI `scan` / `import` commands) cannot open the same catalog (concurrent writes would lose each other's changes).
+Different catalogs can be open in several windows. A lock left behind by a crash is taken over automatically when the
+owning process no longer exists. A lock created on another computer cannot be verified, so delete the `.lock` file
+yourself if it is stale. The CLI `list` / `find` commands do not take the lock and can read a catalog that is open elsewhere.
+
 ## Limitations
 
 - The "Password check only (no encryption)" protection is only checked when the catalog is opened in this
