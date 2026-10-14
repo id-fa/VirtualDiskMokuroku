@@ -114,7 +114,9 @@ What encryption does not protect:
 All drives registered in a Virtual CD-ROM Case catalog (`.cas` / `.caz`) can be added to the open catalog at once,
 even if the original media is no longer at hand. Compressed files (a `.cas` saved with "Compress the cas file when
 saving (compressed with Zlib)" and a `.caz` saved with "Always compress when saving (caz format)") are imported as
-they are; UNLHA32.DLL is not needed.
+they are; UNLHA32.DLL is not needed. A `.caz` is decompressed with [7-Zip](https://7-zip.org/) if it is installed, and
+with the built-in decoder otherwise. The built-in decoder takes tens of seconds to minutes on large files (hundreds of
+MB), so installing 7-Zip brings that down to a few seconds.
 
 Virtual CD-ROM Case itself can be downloaded from the pages below and still runs on Windows 11.
 

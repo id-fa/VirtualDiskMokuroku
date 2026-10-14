@@ -90,7 +90,9 @@ class ImportDialog(QDialog):
 
     def _on_progress(self, phase: str, count: int) -> None:
         # phase の順序は importer.import_catalog の docstring を参照
-        if phase == "decompress":
+        if phase == "decompress:7zip":
+            self._set_status(tr('圧縮されたファイルを展開中… ({size}、7-Zip)').format(size=format_size(count)))
+        elif phase == "decompress":
             self._set_status(tr('圧縮されたファイルを展開中… ({size})').format(size=format_size(count)))
         elif phase == "parse":
             self._set_status(tr('ファイルを読み込み中… {count:,} 件').format(count=count))

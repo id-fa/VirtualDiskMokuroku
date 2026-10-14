@@ -38,6 +38,7 @@ CSV エクスポートと突き合わせて分かった構造で、意味の分�
 from __future__ import annotations
 
 import gzip
+import os
 import re
 import struct
 import zlib
@@ -257,10 +258,14 @@ def property_items(properties: list[bytes]) -> list[tuple[str, str]]:
 ProgressCallback = Callable[[str, int], None]
 
 
-def unwrap_compressed(data: bytes, *, progress: ProgressCallback | None = None) -> bytes:
+def unwrap_compressed(
+    data: bytes, *, path: str | os.PathLike[str] | None = None, progress: ProgressCallback | None = None
+) -> bytes:
     """圧縮して保存した .cas (gzip) / .caz (LZH) なら展開して返す。圧縮されていなければそのまま返す。
 
-    展開する前に ``progress("decompress", 圧縮後のサイズ)`` を呼ぶ (LZH の展開は純 Python なので時間がかかる)。
+    展開する前に ``progress("decompress", 圧縮後のサイズ)`` を呼ぶ。LZH は ``path`` (元のファイル) を渡すと
+    7-Zip がインストールされていればそれで展開する (``lzh.extract_first`` 参照。そのときの phase は
+    ``decompress:7zip``)。内蔵のデコーダは純 Python なので、大きなファイルでは時間がかかる。
     """
     if data.startswith(_GZIP_MAGIC):
         if progress is not None:
@@ -270,9 +275,7 @@ def unwrap_compressed(data: bytes, *, progress: ProgressCallback | None = None) 
         except (OSError, EOFError, zlib.error) as error:
             raise CatalogError(tr('圧縮された .cas を展開できません ({error})').format(error=error)) from error
     if lzh.is_lzh(data):
-        if progress is not None:
-            progress("decompress", len(data))
-        return lzh.extract_first(data)
+        return lzh.extract_first(data, path=path, progress=progress)
     return data
 
 
@@ -282,13 +285,14 @@ def parse_case(
     encoding: str = DEFAULT_ENCODING,
     is_cancelled: Callable[[], bool] | None = None,
     progress: ProgressCallback | None = None,
+    path: str | os.PathLike[str] | None = None,
 ) -> CaseFile:
     """.cas / .caz の中身を読む。``encoding`` はファイル名などの文字コード。読めない場合は ``CatalogError``。
 
     進捗は ``progress("decompress", 圧縮後のサイズ)`` (圧縮されている場合) と ``progress("parse", 読み取った
-    レコード数)`` で通知する。
+    レコード数)`` で通知する。``path`` は ``data`` の元のファイル (あれば .caz の展開に 7-Zip を使える)。
     """
-    data = unwrap_compressed(data, progress=progress)
+    data = unwrap_compressed(data, path=path, progress=progress)
     reader = _Reader(data)
     header = data[: _CLASS_HEAD.size + len(_CLASS_NAME)]
     if len(header) < _CLASS_HEAD.size or not header.endswith(_CLASS_NAME):
@@ -318,7 +322,7 @@ def read_case(
 ) -> CaseFile:
     with open(path, "rb") as stream:
         data = stream.read()
-    return parse_case(data, encoding=encoding, is_cancelled=is_cancelled, progress=progress)
+    return parse_case(data, encoding=encoding, is_cancelled=is_cancelled, progress=progress, path=path)
 
 
 def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled, progress) -> CaseFile:

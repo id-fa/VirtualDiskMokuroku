@@ -1,5 +1,6 @@
 """Virtual CD-ROM Case のカタログ (.cas) のインポートのテスト。"""
 
+import hashlib
 import os
 import tempfile
 
@@ -327,12 +328,15 @@ def test_cli_import(cas_path, tmp_path, monkeypatch, capsys):
     assert cli.main(["import", str(tmp_path / "missing.cas"), str(target)]) == 1
 
 
-def test_compressed_case_files(tmp_path):
+def test_compressed_case_files(tmp_path, monkeypatch):
     """圧縮して保存した .cas (gzip) と .caz (LZH) も、圧縮なしの .cas と同じ内容に読める。"""
     import gzip
 
     from virtualdiskmokuroku.core import lzh
 
+    from virtualdiskmokuroku.core import lzh
+
+    monkeypatch.setattr(lzh, "find_7zip", lambda: None)  # 7-Zip の有無によらず内蔵のデコーダを確かめる
     plain = sample.sample_case()
     expected = vcdcase.parse_case(plain)
 
@@ -380,3 +384,85 @@ def test_compressed_case_files(tmp_path):
         vcdcase.parse_case(bytes(broken))
     with pytest.raises(CatalogError, match="ではありません"):
         vcdcase.parse_case(b"\x00" * 40)
+
+
+def test_lzh_medium_archive():
+    """複数ブロック・長い一致・重なる複写 (0 の連続) を含む書庫。UNLHA32.DLL で圧縮した 56,727 バイトの合成 .cas。"""
+    from virtualdiskmokuroku.core import lzh
+
+    with open(os.path.join(os.path.dirname(__file__), "data", "vcdcase_medium.caz"), "rb") as stream:
+        archived = stream.read()
+    (member,) = lzh.iter_members(archived)
+    assert (member.method, member.original_size) == (b"-lh5-", 56727)
+    plain = lzh.extract_first(archived)
+    assert len(plain) == 56727 and hashlib.md5(plain).hexdigest() == "9d70678790fa24c486813299eaac2923"
+    case = vcdcase.parse_case(archived)
+    assert [drive.label for drive in case.drives] == ["DISK_00", "DISK_01", "DISK_02"]
+    assert sum(len(drive.entries) for drive in case.drives) == 606
+
+    # 圧縮データの途中を壊すと、読み残しや構造の不一致として検出される (例外にならずに止まることはない)
+    broken = bytearray(archived)
+    broken[len(broken) // 2 : len(broken) // 2 + 64] = bytes(64)
+    with pytest.raises(CatalogError):
+        vcdcase.parse_case(bytes(broken))
+
+
+MEDIUM_CAZ = os.path.join(os.path.dirname(__file__), "data", "vcdcase_medium.caz")
+MEDIUM_MD5 = "9d70678790fa24c486813299eaac2923"
+
+
+def test_lzh_7zip_fallback(tmp_path, monkeypatch):
+    """7-Zip が見つかっても、失敗したり出力のサイズが合わなければ内蔵のデコーダで展開する。パスが無ければ 7-Zip は使わない。"""
+    from virtualdiskmokuroku.core import lzh
+
+    with open(MEDIUM_CAZ, "rb") as stream:
+        archived = stream.read()
+    calls: list[tuple[str, str]] = []
+    outputs: list[bytes | None] = [None, b"short"]
+
+    def fake_7zip(exe, path):
+        calls.append((exe, os.fspath(path)))
+        return outputs.pop(0)
+
+    real_extract = lzh._extract_with_7zip
+    monkeypatch.setattr(lzh, "find_7zip", lambda: "fake-7z.exe")
+    monkeypatch.setattr(lzh, "_extract_with_7zip", fake_7zip)
+    phases: list[str] = []
+    plain = lzh.extract_first(archived, path=MEDIUM_CAZ, progress=lambda phase, _count: phases.append(phase))
+    assert hashlib.md5(plain).hexdigest() == MEDIUM_MD5 and phases == ["decompress:7zip", "decompress"]
+    phases.clear()
+    assert lzh.extract_first(archived, path=MEDIUM_CAZ, progress=lambda phase, _count: phases.append(phase)) == plain
+    assert phases == ["decompress:7zip", "decompress"]
+    assert calls == [("fake-7z.exe", MEDIUM_CAZ)] * 2
+    # パスを渡さなければ (メモリ上のデータだけなら) 7-Zip は呼ばない
+    phases.clear()
+    assert lzh.extract_first(archived, progress=lambda phase, _count: phases.append(phase)) == plain
+    assert phases == ["decompress"] and len(calls) == 2
+
+    # 7-Zip の呼び出し自体が失敗しても (実行ファイルが無い) None が返り、内蔵のデコーダに切り替わる
+    assert real_extract(str(tmp_path / "missing-7z.exe"), MEDIUM_CAZ) is None
+
+
+def test_lzh_with_installed_7zip(tmp_path):
+    """7-Zip がインストールされていれば、それで展開した結果が内蔵のデコーダと一致する。"""
+    from virtualdiskmokuroku.core import lzh
+
+    exe = lzh.find_7zip()
+    if exe is None:
+        pytest.skip("7-Zip がインストールされていない")
+    with open(MEDIUM_CAZ, "rb") as stream:
+        archived = stream.read()
+    phases: list[str] = []
+    plain = lzh.extract_first(archived, path=MEDIUM_CAZ, progress=lambda phase, _count: phases.append(phase))
+    assert hashlib.md5(plain).hexdigest() == MEDIUM_MD5 and phases == ["decompress:7zip"]
+
+    # インポートでも元のファイルのパスが渡り、7-Zip で展開される
+    catalog = Catalog.create(tmp_path / "a.vdmoku", cache_root=tmp_path / "cache")
+    seen: list[tuple[str, int]] = []
+    outcome = import_vcdcase(catalog, MEDIUM_CAZ, progress=lambda phase, count: seen.append((phase, count)))
+    assert seen[0] == ("decompress:7zip", len(archived)) and len(outcome.drives) == 3
+    # 壊れたファイルは 7-Zip が失敗し、内蔵のデコーダのエラーになる
+    broken = tmp_path / "broken.caz"
+    broken.write_bytes(archived[:-200])
+    with pytest.raises(CatalogError, match="LZH"):
+        lzh.extract_first(broken.read_bytes(), path=broken)

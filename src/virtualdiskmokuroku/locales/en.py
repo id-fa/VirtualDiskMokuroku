@@ -264,6 +264,7 @@ STRINGS: dict[str, str] = {
     "インポートに失敗しました。\n\n{message}": "Import failed.\n\n{message}",
     "ドライブを取り込み中… {count:,} / {_total:,}": "Importing drives… {count:,} / {_total:,}",
     "圧縮されたファイルを展開中… ({size})": "Decompressing the file… ({size})",
+    "圧縮されたファイルを展開中… ({size}、7-Zip)": "Decompressing the file… ({size}, 7-Zip)",
     "ファイルを読み込み中… {count:,} 件": "Reading the file… {count:,} records",
     "ドライブを取り込み中… {current:,} / {total:,}: {name}": "Importing drives… {current:,} / {total:,}: {name}",
     "エントリ {count:,} 件": "{count:,} entries",

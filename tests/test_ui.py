@@ -621,6 +621,8 @@ def test_import_vcdcase(window, tmp_path, monkeypatch):
     dialog = dialogs[0]
     dialog._on_progress("decompress", 2048)
     assert dialog._status.text() == "圧縮されたファイルを展開中… (2.00 KB)"
+    dialog._on_progress("decompress:7zip", 2048)
+    assert dialog._status.text() == "圧縮されたファイルを展開中… (2.00 KB、7-Zip)"
     dialog._on_progress("parse", 12345)
     assert dialog._status.text() == "ファイルを読み込み中… 12,345 件"
     dialog._on_progress("import_total", 2)

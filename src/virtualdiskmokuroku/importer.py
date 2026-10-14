@@ -106,7 +106,7 @@ def import_catalog(
         record = stencil.parse_stencil(data, is_cancelled=is_cancelled, progress=progress)
         specs = [_stencil_spec(root, path.name, file_time) for root in record.roots]
     else:
-        case = vcdcase.parse_case(data, is_cancelled=is_cancelled, progress=progress)
+        case = vcdcase.parse_case(data, is_cancelled=is_cancelled, progress=progress, path=path)
         specs = [_vcdcase_spec(drive, path.name, file_time) for drive in case.drives]
     del data
     if not specs:
