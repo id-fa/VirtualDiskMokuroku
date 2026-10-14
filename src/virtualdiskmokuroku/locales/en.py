@@ -513,7 +513,17 @@ STRINGS: dict[str, str] = {
     "再読み込み": "Reload",
     "スキャン開始": "Start scan",
     "ファイルリストを取得中… (直接走査)": "Reading the file list… (direct scan)",
-    "スキャンするドライブを選択してください。": "Select the drive to scan.",
+    "スキャンするドライブを選択するか、「フォルダを指定」でドライブ内のフォルダを選んでください。":
+        'Select the drive to scan, or choose a folder on a drive with "Choose folder".',
+    "スキャン対象:": "Scan target:",
+    "(未選択)": "(not selected)",
+    "フォルダを指定(&F)...": "Choose &folder...",
+    "スキャンするフォルダ": "Folder to scan",
+    "フォルダ {path} の情報を取得できません。\n\n{error}": "Cannot get information about the folder {path}.\n\n{error}",
+    "フォルダ {path} のドライブの準備ができていません。": "The drive of the folder {path} is not ready.",
+    "更新 (識別情報が一致しない): {name}": "Update (identity does not match): {name}",
+    "「{name}」は、スキャン対象のボリューム (ラベル・シリアル・フォルダ) と識別情報が一致しません。このスキャン結果で「{name}」を置き換えますか?":
+        'The identity of "{name}" (label, serial number, folder) does not match the scan target. Replace "{name}" with this scan result?',
     "ラベル": "Label",
     "形式": "File system",
     "容量": "Capacity",
@@ -534,8 +544,8 @@ STRINGS: dict[str, str] = {
     "キャンセルしています… (取得できた拡張コンテキストまでを登録します)": "Cancelling… (the extended context read so far will be registered)",
     "スキャンに失敗しました: {message}": "Scan failed: {message}",
     "スキャンに失敗しました。\n\n{message}": "Scan failed.\n\n{message}",
-    "「{name}」に一致するドライブが接続されていません。接続してから「再読み込み」を押してください。":
-        "No connected drive matches \"{name}\". Connect it and press Reload.",
+    "「{name}」に一致するドライブが接続されていません。接続してから「再読み込み」を押すか、「フォルダを指定」で場所を選んでください。":
+        'No connected drive matches "{name}". Connect it and press Reload, or pick its location with "Choose folder".',
     "更新: {name}": "Update: {name}",
     "ファイルリストを取得中… {count:,} 件": "Reading the file list… {count:,} entries",
     "データベースを作成中… {count:,} 件": "Building the database… {count:,} entries",

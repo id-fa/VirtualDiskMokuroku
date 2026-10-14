@@ -1037,6 +1037,51 @@ def test_drop_catalog_file_opens_it(window, tmp_path, monkeypatch):
     assert not answers and Catalog.open(first.path).drives[0]["name"] == "ドライブone"
 
 
+def test_scan_dialog_registers_folder(window, tmp_path, monkeypatch):
+    """「フォルダを指定」でドライブ内のフォルダを 1 つのドライブとして登録し、更新時はそのフォルダが対象になる。"""
+    from PySide6.QtWidgets import QMessageBox
+
+    from virtualdiskmokuroku.ui.scan_dialog import ScanDialog
+
+    catalog = window.catalog
+    folder = tmp_path / "one" / "docs"
+    dialog = ScanDialog(catalog, window.app_settings, window)
+    assert dialog._root is None and not dialog._start_button.isEnabled()
+    dialog._set_root(str(folder))
+    assert dialog._root == str(folder) and dialog._root_label.text() == str(folder)
+    assert dialog._name.text().endswith("\\" + os.path.splitdrive(str(folder))[1].strip("\\"))
+    # 登録済みの 2 台は同定が一致しないので「更新 (識別情報が一致しない)」として候補に入る
+    labels = [dialog._target.itemText(i) for i in range(dialog._target.count())]
+    assert labels[0] == "新規に追加" and all(label.startswith("更新 (識別情報が一致しない)") for label in labels[1:]) and len(labels) == 3
+    dialog._source.setCurrentIndex(dialog._source.findData(scanner.SOURCE_WALK))
+    dialog._name.setText("書類フォルダ")
+    dialog._start()
+    assert wait_until(lambda: dialog._worker is None, timeout=20)
+    assert dialog.updated_drive_id and "書類フォルダ" in dialog._status.text()
+    drive = catalog.drive(dialog.updated_drive_id)
+    assert drive["root"] == str(folder) and drive["file_count"] == 3  # readme.md, sub\deep.txt, sub\写真 100%.JPG
+    dialog.deleteLater()
+
+    # 更新: フォルダで登録したドライブを対象にすると、現在の場所が対象になり、更新先にそのドライブが選ばれる
+    window._after_catalog_changed(drive["id"])
+    dialog = ScanDialog(catalog, window.app_settings, window, target_drive_id=drive["id"])
+    assert dialog._root.casefold() == str(folder).casefold() and dialog._target.currentData() == drive["id"]
+    assert dialog._target.itemText(dialog._target.currentIndex()) == "更新: 書類フォルダ"
+    dialog.deleteLater()
+
+    # 同定が一致しないドライブを更新先に選ぶと確認が出る。No なら何もしない
+    other_id = next(item["id"] for item in catalog.drives if item["id"] != drive["id"])
+    dialog = ScanDialog(catalog, window.app_settings, window)
+    dialog._set_root(str(folder))
+    dialog._target.setCurrentIndex(dialog._target.findData(other_id))
+    assert other_id in dialog._unmatched_ids
+    answers = [QMessageBox.StandardButton.No]
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: answers.pop(0))
+    dialog._start()
+    assert dialog._worker is None and not answers
+    dialog.deleteLater()
+
+
 def test_locked_catalog_is_refused(window, tmp_path, monkeypatch):
     """別のインスタンスが開いているカタログは開けず、理由を表示する。閉じるとロックは消える。"""
     import json

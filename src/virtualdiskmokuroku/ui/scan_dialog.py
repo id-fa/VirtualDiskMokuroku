@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import threading
 
 from PySide6.QtCore import Qt, QThread, Signal
@@ -10,7 +11,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
+    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -24,12 +27,12 @@ from PySide6.QtWidgets import (
 )
 
 from ..core import scanner
-from ..core.catalog import Catalog
+from ..core.catalog import Catalog, default_drive_name
 from ..core.errors import ScanCancelled
 from ..core.es_client import EsClient, EsError, find_es_exe
 from ..core.formatting import format_size
 from ..core.settings import AppSettings
-from ..core.volume import VolumeInfo, list_volumes
+from ..core.volume import VolumeInfo, get_volume_info, list_volumes
 from ..pipeline import ScanOutcome, format_context_errors, scan_into_catalog
 from .style import apply_selection_style
 from ..i18n import tr
@@ -87,16 +90,24 @@ class ScanWorker(QThread):
 
 
 class ScanDialog(QDialog):
-    """接続中のドライブを選んでスキャンし、カタログへ追加または更新する。"""
+    """接続中のドライブ (またはその中のフォルダ) を選んでスキャンし、カタログへ追加または更新する。
+
+    スキャン対象 (``_root``) は、一覧で選んだボリュームのルートか「フォルダを指定」で選んだフォルダ。
+    更新先には同定 (シリアル・形式・フォルダ) が一致するドライブのほか、一致しないドライブも選べる
+    (Virtual CD-ROM Case から取り込んだフォルダ登録を引き継ぐときなど。開始時に確認を出す)。
+    """
 
     def __init__(self, catalog: Catalog, app_settings: AppSettings, parent=None, target_drive_id: str | None = None):
         super().__init__(parent)
         self.setWindowTitle(tr('ドライブの追加 / 更新'))
-        self.resize(760, 520)
+        self.resize(760, 560)
         self._catalog = catalog
         self._app_settings = app_settings
         self._target_drive_id = target_drive_id
         self._volumes: list[VolumeInfo] = []
+        self._root: str | None = None  # スキャン対象 ("E:\\" またはフォルダ)
+        self._root_volume: VolumeInfo | None = None  # スキャン対象が属するボリューム
+        self._unmatched_ids: set[str] = set()  # 更新先候補のうち、同定が一致しないドライブ
         self._worker: ScanWorker | None = None
         self._context_total = 0
         self._in_context_phase = False
@@ -105,7 +116,7 @@ class ScanDialog(QDialog):
         self._error_log: str = ""
 
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel(tr('スキャンするドライブを選択してください。')))
+        layout.addWidget(QLabel(tr('スキャンするドライブを選択するか、「フォルダを指定」でドライブ内のフォルダを選んでください。')))
 
         self._table = QTableWidget(0, 7)
         self._table.setHorizontalHeaderLabels([tr('ドライブ'), tr('ラベル'), tr('種類'), tr('形式'), tr('容量'), tr('空き'), tr('カタログ登録')])
@@ -119,6 +130,16 @@ class ScanDialog(QDialog):
         apply_selection_style(self._table)
         self._table.itemSelectionChanged.connect(self._on_volume_selected)
         layout.addWidget(self._table, 1)
+
+        root_row = QHBoxLayout()
+        root_row.addWidget(QLabel(tr('スキャン対象:')))
+        self._root_label = QLabel(tr('(未選択)'))
+        self._root_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        root_row.addWidget(self._root_label, 1)
+        self._folder_button = QPushButton(tr('フォルダを指定(&F)...'))
+        self._folder_button.clicked.connect(self._choose_folder)
+        root_row.addWidget(self._folder_button)
+        layout.addLayout(root_row)
 
         form = QFormLayout()
         self._target = QComboBox()
@@ -188,9 +209,15 @@ class ScanDialog(QDialog):
         if preselect >= 0:
             self._table.selectRow(preselect)
         elif self._target_drive_id:
-            name = self._catalog.drive(self._target_drive_id)["name"]
-            self._status.setText(tr('「{name}」に一致するドライブが接続されていません。接続してから「再読み込み」を押してください。').format(name=name))
-        self._on_volume_selected()
+            target = self._catalog.drive(self._target_drive_id)
+            connected = self._catalog.connected_root(self._target_drive_id)
+            if connected is not None and os.path.isdir(connected):
+                self._set_root(connected)  # フォルダで登録したドライブ: 現在の場所を対象にする
+            else:
+                self._status.setText(tr('「{name}」に一致するドライブが接続されていません。接続してから「再読み込み」を押すか、「フォルダを指定」で場所を選んでください。').format(name=target['name']))
+                self._on_volume_selected()
+        else:
+            self._on_volume_selected()
 
     def _selected_volume(self) -> VolumeInfo | None:
         rows = self._table.selectionModel().selectedRows()
@@ -198,28 +225,67 @@ class ScanDialog(QDialog):
 
     def _on_volume_selected(self) -> None:
         volume = self._selected_volume()
+        if volume is None:
+            if self._root is not None and self._root_volume is not None and self._root_volume.root != self._root:
+                return  # フォルダ指定中。一覧の選択解除で対象は変えない
+            self._root, self._root_volume = None, None
+        else:
+            self._root, self._root_volume = volume.root, volume
+        self._update_targets()
+
+    def _choose_folder(self) -> None:
+        start = self._root or ""
+        path = QFileDialog.getExistingDirectory(self, tr('スキャンするフォルダ'), start)
+        if path:
+            self._set_root(os.path.normpath(path))
+
+    def _set_root(self, path: str) -> None:
+        """フォルダ (またはドライブのルート) をスキャン対象にする。一覧の選択は外す。"""
+        try:
+            volume = get_volume_info(path)
+        except OSError as error:
+            QMessageBox.warning(self, self.windowTitle(), tr('フォルダ {path} の情報を取得できません。\n\n{error}').format(path=path, error=error))
+            return
+        if not volume.ready:
+            QMessageBox.warning(self, self.windowTitle(), tr('フォルダ {path} のドライブの準備ができていません。').format(path=path))
+            return
+        self._table.blockSignals(True)
+        self._table.clearSelection()
+        self._table.blockSignals(False)
+        self._root, self._root_volume = path, volume
+        self._update_targets()
+
+    def _update_targets(self) -> None:
+        """スキャン対象に応じて、対象の表示・更新先の候補・既定の表示名を作り直す。"""
+        root, volume = self._root, self._root_volume
+        self._root_label.setText(root if root else tr('(未選択)'))
         self._target.blockSignals(True)
         self._target.clear()
-        if volume is not None:
-            matches = self._catalog.find_matching_drives(volume, volume.root)
+        self._unmatched_ids = set()
+        if root is not None and volume is not None:
+            matches = self._catalog.find_matching_drives(volume, root)
             for drive in matches:
                 self._target.addItem(tr('更新: {name}').format(name=drive['name']), drive["id"])
             self._target.addItem(tr('新規に追加'), None)
+            matched_ids = {drive["id"] for drive in matches}
+            for drive in self._catalog.drives:
+                if drive["id"] not in matched_ids:
+                    self._unmatched_ids.add(drive["id"])
+                    self._target.addItem(tr('更新 (識別情報が一致しない): {name}').format(name=drive['name']), drive["id"])
             if self._target_drive_id:
                 index = self._target.findData(self._target_drive_id)
                 if index >= 0:
                     self._target.setCurrentIndex(index)
         self._target.blockSignals(False)
         self._on_target_changed()
-        self._start_button.setEnabled(volume is not None and self._worker is None)
+        self._start_button.setEnabled(root is not None and self._worker is None)
 
     def _on_target_changed(self) -> None:
-        volume = self._selected_volume()
         drive_id = self._target.currentData()
         if drive_id:
             self._name.setText(self._catalog.drive(drive_id)["name"])
-        elif volume is not None:
-            self._name.setText(volume.display_name)
+        elif self._root is not None and self._root_volume is not None:
+            self._name.setText(default_drive_name(self._root_volume, self._root))
         else:
             self._name.clear()
 
@@ -236,9 +302,19 @@ class ScanDialog(QDialog):
             return None
 
     def _start(self) -> None:
-        volume = self._selected_volume()
-        if volume is None:
+        root = self._root
+        if root is None:
             return
+        drive_id = self._target.currentData()
+        if drive_id in self._unmatched_ids:
+            name = self._catalog.drive(drive_id)["name"]
+            answer = QMessageBox.question(
+                self, self.windowTitle(),
+                tr('「{name}」は、スキャン対象のボリューム (ラベル・シリアル・フォルダ) と識別情報が一致しません。このスキャン結果で「{name}」を置き換えますか?').format(name=name),
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No,
+            )  # fmt: skip
+            if answer != QMessageBox.StandardButton.Yes:
+                return
         source = self._source.currentData()
         es = self._make_es_client(source)
         if es is None and source == scanner.SOURCE_EVERYTHING:
@@ -252,9 +328,7 @@ class ScanDialog(QDialog):
         self._in_context_phase = False
         self._error_lines, self._error_log = [], ""
         self._errors_button.setVisible(False)
-        self._worker = ScanWorker(
-            self._catalog, volume.root, self._target.currentData(), self._name.text().strip(), source, es, self
-        )
+        self._worker = ScanWorker(self._catalog, root, drive_id, self._name.text().strip(), source, es, self)
         self._worker.progress.connect(self._on_progress)
         self._worker.succeeded.connect(self._on_succeeded)
         self._worker.failed.connect(self._on_failed)
@@ -262,7 +336,7 @@ class ScanDialog(QDialog):
         self._worker.start()
 
     def _set_running(self, running: bool) -> None:
-        for widget in (self._table, self._target, self._name, self._source, self._refresh_button):
+        for widget in (self._table, self._target, self._name, self._source, self._refresh_button, self._folder_button):
             widget.setEnabled(not running)
         self._start_button.setEnabled(not running)
         self._close_button.setText(tr('キャンセル') if running else tr('閉じる'))

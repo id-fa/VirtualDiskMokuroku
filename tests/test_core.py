@@ -340,6 +340,29 @@ def test_catalog_lock(tmp_path, monkeypatch):
     unlocked.close()
 
 
+def test_folder_scan_default_name_and_identity(tmp_path, scanned):
+    """フォルダをスキャンすると、既定の名前にフォルダが付き、同定はシリアルとフォルダのパスで行う。"""
+    from virtualdiskmokuroku.core.catalog import default_drive_name
+    from virtualdiskmokuroku.core.volume import VolumeInfo, get_volume_info
+
+    tree, _files, _db_path, _result = scanned
+    volume = VolumeInfo(root="D:\\", label="USER", drive_type="fixed")
+    assert default_drive_name(volume, "D:\\") == "USER (D:)"
+    assert default_drive_name(volume, "D:\\Photos\\2024\\") == "USER (D:)\\Photos\\2024"
+    assert default_drive_name(VolumeInfo(root="E:\\", drive_type="cdrom"), "E:\\") == "CD/DVD (E:)"
+
+    catalog = Catalog.create(tmp_path / "folder.vdmoku", cache_root=tmp_path / "cache")
+    sub = tree / "docs"
+    db_path = tmp_path / "sub.db"
+    result = scanner.scan_to_db(str(sub), db_path, source=scanner.SOURCE_WALK, ignore=IgnoreRules(DEFAULT_IGNORE))
+    drive = catalog.put_drive(db_path, result)
+    assert drive["name"].endswith(f"\\{os.path.splitdrive(str(sub))[1].strip(os.sep)}") and drive["root"] == str(sub)
+    # 同じフォルダは一致し、親フォルダやドライブ全体は一致しない。接続中の場所はフォルダのパスで返る
+    assert catalog.find_matching_drives(get_volume_info(str(sub)), str(sub)) == [drive]
+    assert catalog.find_matching_drives(get_volume_info(str(tree)), str(tree)) == []
+    assert catalog.connected_root(drive["id"]).casefold() == str(sub).casefold()
+
+
 def test_opens_catalog_created_under_old_name(tmp_path):
     import json
 

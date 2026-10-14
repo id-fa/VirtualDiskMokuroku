@@ -68,10 +68,12 @@ def member_folder(name, children=(), **kwargs):
 
 
 def drive(label, children, *, serial=0x1A2B3C4D, filesystem="CDFS", total=700_000_000, free=0, media=1,
-          cluster_sectors=1, sector=2048, comment=b"2003/04/05", category=b"", short_label=None, schema=12):  # fmt: skip
+          cluster_sectors=1, sector=2048, comment=b"2003/04/05", category=b"", short_label=None, schema=12,
+          folder=""):  # fmt: skip
+    """ドライブ 1 台。``folder`` を渡すとフォルダ登録 (名前にドライブレター抜きのフォルダパスが入る)。"""
     data = record(
-        b"", attrs=0x10000000 | (media << 24) | DIRECTORY, mtime=0, comment=comment, category=category, children=children,
-        schema=schema,
+        folder.encode("cp932"), attrs=0x10000000 | (media << 24) | DIRECTORY, mtime=0, comment=comment, category=category,
+        children=children, schema=schema,
     )
     data += cstring(label.encode("cp932")) + b"\x00" + struct.pack("<I", serial) + cstring(filesystem.encode("ascii"))
     data += struct.pack("<QQ", total, free) + cstring((label[:16] if short_label is None else short_label).encode("cp932"))

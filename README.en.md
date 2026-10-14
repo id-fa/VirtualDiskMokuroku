@@ -42,6 +42,7 @@ After `pip install -e .`, the `virtualdiskmokuroku` command starts it as well.
 | Thumbnail view | "View" at the top right of the list (or the View menu) → "Tiles" / "Thumbnails with info". Available for catalogs that store image thumbnails |
 | Open the real folder | Right-click in the list or the tree → "Open this folder in Explorer". Shown only while the same drive is connected (even under a different drive letter) |
 | Update a drive | Right-click a drive in the tree → "Update this drive". The drive is identified by label and serial number, so a changed drive letter is fine |
+| Register a folder | "Choose folder" in "Add / update drive" registers only that folder (on a drive) as one drive, like the folder registration of Virtual CD-ROM Case (CLI: `scan D:\Photos my.vdmoku`). The default name looks like `USER (D:)\Photos`, and updates are matched by the volume serial number and the folder path. A drive whose identity does not match can also be chosen as the update target (with a confirmation) |
 | Drive groups | Right-click a drive in the tree → "Change group" (choose an existing group or type a new name; leave it empty to remove the drive from its group). Drives in the same group are shown together in the tree. Groups are one level deep, and a group with no drives disappears. Right-click a group to rename it |
 | Organize drives | Drive → Organize drives. Reorder drives and move them between groups by drag & drop (or "Up / Down"), delete several drives at once, or remove only the extended context (thumbnails, text content, etc.). Order, group changes and deletions are written to the catalog together when you press OK |
 | Copy drives to another catalog | Select drives in "Organize drives" and press "Copy to another catalog". Choosing an existing catalog adds them to it; a new file name creates a new catalog (works across encrypted and unencrypted catalogs; backups are not copied) |
@@ -140,6 +141,8 @@ What is imported:
   not imported
 - Drives registered inside a group (folder) are imported into a group of the same name. Groups are one level deep,
   so nested groups are flattened to the outermost one (the group comment is shown in "Drive info")
+- A registered folder becomes a drive whose location is `?:\folder path`. Choosing the real folder later with
+  "Update this drive" → "Choose folder" turns it into a folder scanned by this application
 - `.cas` files do not record drive letters, so locations are shown starting with `?:\`
 - Imported drives are always added as new drives. Connecting the real drive later and choosing "Update this drive"
   updates it as the same drive, matched by label and serial number (the imported comments are not kept after an

@@ -24,7 +24,9 @@ CSV エクスポートと突き合わせて分かった構造で、意味の分�
 属性の下位は Windows のファイル属性で、上位バイトが種別を表す::
 
     0x20  カタログ自身 (先頭のレコード。その子がドライブかグループ)
-    0x10  ドライブ。下位 4 ビットはメディアの種類 (1 = CD/DVD、8 = ディスク)。名前は空
+    0x10  ドライブ。下位 4 ビットはメディアの種類 (1 = CD/DVD、8 = ディスク)。名前は空。フォルダを登録した場合は
+          名前にドライブレター抜きのフォルダパス ("_CODE\\Photos") が入り、ラベルは付けた名前、短いラベルはフォルダ名、
+          空き容量は全ビット 1 になる
     0x40  中身を展開して登録した書庫 (フォルダ属性が立ち、子に中身を持つ)。書庫の種類は 1 = LZH, 2 = ZIP, 6 = RAR など
     0x80  書庫内のエントリ (書庫内のフォルダは 0xC0)
 
@@ -93,6 +95,7 @@ _ATTRIBUTE_MASK = 0x00FFFFFF & ~_KIND_GROUP
 _FILE_ATTRIBUTE_DIRECTORY = 0x10
 _MIN_FILETIME = 116444736000000000  # 1970-01-01。これより前は Virtual CD-ROM Case でも「不明」と表示される
 _MAX_FILETIME = 2650467743999999999  # 9999-12-31
+_UNKNOWN_U64 = 0xFFFFFFFFFFFFFFFF  # 空き容量が不明 (フォルダ登録) のときの値
 _CANCEL_CHECK_INTERVAL = 20000
 
 # プロパティの並び (種類ごと)。CSV エクスポートの列と突き合わせて分かったものと、そこから類推できるものだけ
@@ -143,11 +146,12 @@ class CaseDrive:
     serial: str  # "1A2B-3C4D"。不明なら空
     filesystem: str
     total_bytes: int
-    free_bytes: int
+    free_bytes: int | None  # 不明 (全ビット 1) なら None
     media_type: int  # 1 = CD/DVD、8 = ディスク (ほかの値は未確認)
     cluster_size: int
     comment: str  # 既定では登録した日付 ("2026/10/06") が入っている
     category: str = ""  # Virtual CD-ROM Case で付けた分類
+    folder: str = ""  # フォルダを登録した場合の、ドライブレター抜きのフォルダパス ("_CODE\\Photos")。ドライブ全体なら空
     group: tuple[str, ...] = ()  # ドライブがグループ (フォルダ) に入っていた場合の、上位のグループ名 (外側から順)
     group_comments: tuple[str, ...] = ()  # 各グループのコメント (group と同じ並び)
     entries: list[CaseEntry] = field(default_factory=list)
@@ -421,8 +425,9 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled, pr
         elif frame.drive is None:
             if is_drive:
                 child.drive = child.new_drive = CaseDrive(
-                    "", "", "", 0, 0, 0, 0, "", group=frame.group, group_comments=frame.group_comments
-                )
+                    "", "", "", 0, 0, 0, 0, "", group=frame.group, group_comments=frame.group_comments,
+                    folder=name.strip("\\"),
+                )  # fmt: skip
                 child.comment, child.category = comment, category
                 child.media_type = (kind >> _MEDIA_SHIFT) & _MEDIA_MASK
             else:  # ドライブをまとめるグループ
@@ -470,7 +475,8 @@ def _read_drive_info(reader: _Reader, frame: _Frame, encoding: str) -> None:
     drive.label = label or short_label
     drive.serial = f"{serial >> 16:04X}-{serial & 0xFFFF:04X}" if serial else ""
     drive.filesystem = filesystem
-    drive.total_bytes, drive.free_bytes = total_bytes, free_bytes
+    drive.total_bytes = total_bytes
+    drive.free_bytes = None if free_bytes == _UNKNOWN_U64 else free_bytes
     drive.media_type, drive.cluster_size = frame.media_type, cluster_sectors * sector_size
     drive.comment = decode_text(frame.comment)[1].strip()
     drive.category = decode_text(frame.category)[1].strip()

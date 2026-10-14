@@ -98,6 +98,12 @@ def default_cache_root() -> Path:
     return Path(base) / "VirtualDiskMokuroku" / "cache"
 
 
+def default_drive_name(volume: VolumeInfo, root: str) -> str:
+    """ドライブ名の既定値。フォルダをスキャンした場合はボリューム名にフォルダを添える ("USER (D:)\\Photos")。"""
+    sub_path = os.path.splitdrive(root)[1].strip("\\")
+    return f"{volume.display_name}\\{sub_path}" if sub_path else volume.display_name
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -817,7 +823,7 @@ class Catalog:
         rename: dict[str, str] = {}
         delete_prefixes: list[str] = []
         if drive_id is None:
-            drive = {"id": uuid.uuid4().hex, "name": name or result.volume.display_name, "backups": []}
+            drive = {"id": uuid.uuid4().hex, "name": name or default_drive_name(result.volume, result.root), "backups": []}
             self.drives.append(drive)
         else:
             drive = self.drive(drive_id)

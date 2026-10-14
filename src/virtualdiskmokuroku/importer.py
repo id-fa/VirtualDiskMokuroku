@@ -196,6 +196,8 @@ def _volume_meta(volume: VolumeInfo) -> dict:
 
 def _vcdcase_spec(drive: vcdcase.CaseDrive, source_name: str, file_time: str) -> _DriveSpec:
     has_volume = bool(drive.total_bytes)
+    # フォルダ登録は "?:\フォルダ" をルートにする (このアプリでフォルダをスキャンした場合と同じ扱い)
+    scan_root = IMPORT_ROOT + drive.folder if drive.folder else IMPORT_ROOT
     volume = VolumeInfo(
         root=IMPORT_ROOT,
         drive_type=_MEDIA_DRIVE_TYPES.get(drive.media_type, "unknown"),
@@ -218,8 +220,9 @@ def _vcdcase_spec(drive: vcdcase.CaseDrive, source_name: str, file_time: str) ->
         vcdcase_media_type=drive.media_type,
         vcdcase_cluster_size=drive.cluster_size,
     )
+    prefix = scan_root.rstrip("\\") + "\\"
     entries = [
-        RawEntry(IMPORT_ROOT + entry.path, entry.is_dir, entry.size, entry.mtime, entry.ctime, entry.attrs)
+        RawEntry(prefix + entry.path, entry.is_dir, entry.size, entry.mtime, entry.ctime, entry.attrs)
         for entry in drive.entries
     ]
     context = {entry.path: (entry.is_dir, partial(_fill_vcdcase, entry)) for entry in drive.entries if entry.has_context}
@@ -230,9 +233,8 @@ def _vcdcase_spec(drive: vcdcase.CaseDrive, source_name: str, file_time: str) ->
         )
         if value
     }  # fmt: skip
-    return _DriveSpec(
-        drive.label or tr('(名前なし)'), IMPORT_ROOT, SOURCE_VCDCASE, volume, scanned_at, meta, extra, entries, context
-    )
+    name = drive.label or (drive.folder.rsplit("\\", 1)[-1] if drive.folder else "") or tr('(名前なし)')
+    return _DriveSpec(name, scan_root, SOURCE_VCDCASE, volume, scanned_at, meta, extra, entries, context)
 
 
 def _fill_vcdcase(entry: vcdcase.CaseEntry, writer) -> None:

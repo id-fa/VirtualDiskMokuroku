@@ -147,6 +147,30 @@ def test_groups(tmp_path):
         assert db.find_path("d\\b.txt").size == 2
 
 
+def test_folder_registration(tmp_path):
+    """フォルダを登録したもの: ドライブレコードの名前にフォルダパスが入り、空き容量は不明 (全ビット 1)。"""
+    data = sample.case_file([
+        sample.drive("写真バックアップ", [sample.folder("2024", [sample.record("a.jpg", size=5)])],
+                     folder="Pictures\\Camera", short_label="Camera", free=0xFFFFFFFFFFFFFFFF, media=8),
+        sample.drive("", [sample.record("b.txt", size=1)], folder="docs", short_label="docs"),
+    ])  # fmt: skip
+    first, second = vcdcase.parse_case(data).drives
+    assert (first.label, first.folder, first.free_bytes, first.total_bytes) == ("写真バックアップ", "Pictures\\Camera", None, 700_000_000)
+    assert [entry.path for entry in first.entries] == ["2024", "2024\\a.jpg"]
+    assert (second.label, second.folder) == ("docs", "docs")  # ラベルが空なら短いラベル (フォルダ名)
+
+    cas_path = tmp_path / "folders.cas"
+    cas_path.write_bytes(data)
+    catalog = Catalog.create(tmp_path / "folders.vdmoku", cache_root=tmp_path / "cache")
+    import_vcdcase(catalog, cas_path)
+    camera, docs = catalog.drives
+    # このアプリでフォルダをスキャンした場合と同じく、場所は "?:\フォルダ" になり、空き容量は入らない
+    assert (camera["name"], camera["root"], camera["total_bytes"], camera.get("free_bytes")) == ("写真バックアップ", "?:\\Pictures\\Camera", 700_000_000, None)
+    assert (docs["name"], docs["root"]) == ("docs", "?:\\docs")
+    with catalog.open_drive_db(camera["id"]) as db:
+        assert db.find_path("2024\\a.jpg").size == 5
+
+
 def test_decode_text_and_properties():
     assert vcdcase.decode_text(b"plain") == ("cp932", "plain")
     assert vcdcase.decode_text("日本語".encode("cp932")) == ("cp932", "日本語")
