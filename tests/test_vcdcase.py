@@ -72,6 +72,47 @@ def test_parse_case():
     ]  # fmt: skip
 
 
+def test_record_text():
+    """レコード末尾の本文 (u32 の長さ付き)。実ファイルではテキストファイルのコメントと同じ内容が入っていた。"""
+    body = "ドライブのメモ\r\n2004/01/24".encode("cp932")
+    data = sample.case_file([sample.drive("DISC", [
+        sample.record("memo.txt", size=len(body), comment=body, text=body),
+        sample.record("plain.txt", size=len(body), text=body),  # コメントが無ければ本文をコメントとして使う
+        sample.record("after.txt", size=1),
+    ])])
+    entries = {entry.path: entry for entry in vcdcase.parse_case(data).drives[0].entries}
+    assert [entry.comment for entry in entries.values()] == [body, body, b""]
+    assert entries["after.txt"].size == 1
+
+
+def test_old_schema():
+    """スキーマ 9 (2001 年ごろの版)。レコードの並びが少し違い、書庫の種類は属性のビットに入る。"""
+    title = "★タイトル★".encode("cp932")
+    data = sample.case_file([sample.drive("MO No.1", [
+        sample.record("index.html", size=100, comment=title, schema=9),
+        sample.folder("dir", [sample.record("a.txt", size=1, schema=9)], schema=9),
+        sample.archive("data.lzh", sample.LZH, [
+            sample.member("x.txt", size=9, schema=9),
+            sample.member_folder("d", [sample.member("y.txt", size=4, schema=9)], schema=9),
+        ], size=500, schema=9),
+        sample.archive("movie.rar", 0x20, [sample.member("m.avi", size=9, schema=9)], size=600, schema=9),  # グループのビットと重なる
+    ], media=2, filesystem="FAT", short_label="0000-0029", schema=9)], schema=9)  # fmt: skip
+    case = vcdcase.parse_case(data)
+    assert case.schema == 9
+    (mo,) = case.drives
+    assert (mo.label, mo.media_type, mo.filesystem, mo.serial) == ("MO No.1", 2, "FAT", "1A2B-3C4D")
+    entries = {entry.path: entry for entry in mo.entries}
+    assert list(entries) == ["index.html", "dir", "dir\\a.txt", "data.lzh", "movie.rar"]
+    assert (entries["index.html"].comment, entries["index.html"].size) == (title, 100)
+    assert entries["dir"].is_dir and entries["dir\\a.txt"].size == 1
+    lzh = entries["data.lzh"]
+    assert (lzh.is_dir, lzh.size, lzh.attrs, lzh.crc) == (False, 500, 0, None)
+    assert lzh.inner == [
+        ("x.txt", 9, sample.FILETIME_2021, False), ("d", None, None, True), ("d/y.txt", 4, sample.FILETIME_2021, False),
+    ]  # fmt: skip
+    assert (entries["movie.rar"].attrs, entries["movie.rar"].inner) == (0, [("m.avi", 9, sample.FILETIME_2021, False)])
+
+
 def test_groups(tmp_path):
     """ドライブをグループ (フォルダ) にまとめたカタログ。グループにもドライブと同じ形式の情報が続く。"""
     data = sample.case_file([
@@ -157,8 +198,8 @@ def test_rejects_broken_files(tmp_path):
         vcdcase.parse_case(data + b"\x00")
     # 未確認の形式バージョンでも構造が同じなら読めるが、読めなかった場合はバージョンを伝える
     assert len(vcdcase.parse_case(sample.case_file([sample.drive("A", [])], schema=13)).drives) == 1
-    with pytest.raises(CatalogError, match="形式バージョン 9 "):
-        vcdcase.parse_case(sample.case_file([sample.drive("A", [])], schema=9)[:-3])
+    with pytest.raises(CatalogError, match="形式バージョン 10 "):
+        vcdcase.parse_case(sample.case_file([sample.drive("A", [])], schema=10)[:-3])
 
     empty = tmp_path / "empty.cas"
     empty.write_bytes(sample.case_file([]))

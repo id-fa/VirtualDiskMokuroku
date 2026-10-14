@@ -14,6 +14,7 @@ LZH, ZIP = 1, 2
 FILETIME_2021 = 132726424220000000  # 2021-08-05 14:07:02 UTC
 FILETIME_2003 = 127000000000000000
 FILETIME_BROKEN = 0xFFFFFFFFFFFFFFFF  # 範囲外の日時 (「不明」として扱われる)
+OLD_SCHEMA = 9  # これ以下は古い形式で組み立てる
 
 
 def cstring(data: bytes) -> bytes:
@@ -25,15 +26,25 @@ def cstring(data: bytes) -> bytes:
 
 
 def record(name, *, attrs=FILE, size=0, mtime=FILETIME_2021, ctime=0, comment=b"", category=b"", properties=(),
-           children=(), crc=None, archive_type=0, packed=None, lead=None, extra=b""):  # fmt: skip
+           children=(), crc=None, archive_type=0, packed=None, lead=None, extra=b"", text=b"", schema=12):  # fmt: skip
     if isinstance(name, str):
         name = name.encode("cp932")
+    if schema <= OLD_SCHEMA:
+        # 古い形式: 属性の繰り返しと書庫の種類 (u16) が無く、種類は属性のビット 16〜23。コメントは数に含まれない最後の文字列
+        data = struct.pack("<QI3Q", size, attrs | (archive_type << 16), 0, mtime, ctime)
+        data += cstring(name) + b"\x02" + cstring(b"") + cstring(b"")
+        data += bytes([len(properties)]) + b"".join(cstring(item) for item in properties) + cstring(comment)
+        data += bytes(12) + struct.pack("<I", len(children)) + b"".join(children)
+        if attrs & KIND_MEMBER:
+            data += struct.pack("<I", size // 2 if packed is None else packed)
+        return data
     data = struct.pack("<IQIH3Q", attrs if lead is None else lead, size, attrs, archive_type, 0, mtime, ctime)
     data += cstring(name) + b"\x02" + cstring(comment) + cstring(category)
     data += bytes([len(properties)]) + b"".join(cstring(item) for item in properties)
     if properties:
         data += cstring(extra)  # プロパティの数には含まれない、最後の文字列
-    data += bytes(7) + struct.pack("<HII", crc is not None, crc or 0, len(children)) + b"".join(children)
+    data += bytes(3) + struct.pack("<I", len(text)) + text  # 本文 (実ファイルではコメントと同じ内容が入っていた)
+    data += struct.pack("<HII", crc is not None, crc or 0, len(children)) + b"".join(children)
     if attrs & KIND_MEMBER:
         data += struct.pack("<IB", size // 2 if packed is None else packed, 0)
     return data
@@ -52,14 +63,15 @@ def member(name, **kwargs):
     return record(name, attrs=KIND_MEMBER | 0xA0, **kwargs)
 
 
-def member_folder(name, children=()):
-    return record(name, attrs=KIND_MEMBER | KIND_ARCHIVE | DIRECTORY, mtime=0, children=children)
+def member_folder(name, children=(), **kwargs):
+    return record(name, attrs=KIND_MEMBER | KIND_ARCHIVE | DIRECTORY, mtime=0, children=children, **kwargs)
 
 
 def drive(label, children, *, serial=0x1A2B3C4D, filesystem="CDFS", total=700_000_000, free=0, media=1,
-          cluster_sectors=1, sector=2048, comment=b"2003/04/05", category=b"", short_label=None):  # fmt: skip
+          cluster_sectors=1, sector=2048, comment=b"2003/04/05", category=b"", short_label=None, schema=12):  # fmt: skip
     data = record(
-        b"", attrs=0x10000000 | (media << 24) | DIRECTORY, mtime=0, comment=comment, category=category, children=children
+        b"", attrs=0x10000000 | (media << 24) | DIRECTORY, mtime=0, comment=comment, category=category, children=children,
+        schema=schema,
     )
     data += cstring(label.encode("cp932")) + b"\x00" + struct.pack("<I", serial) + cstring(filesystem.encode("ascii"))
     data += struct.pack("<QQ", total, free) + cstring((label[:16] if short_label is None else short_label).encode("cp932"))
@@ -77,8 +89,9 @@ def group(name, children, comment=b""):
 
 
 def case_file(drives, schema=12):
-    top = record("C:\\work\\sample.cas", attrs=0x20000020, lead=0xFFFFFFFF, children=drives)
-    return b"\xff\xff" + struct.pack("<HH", schema, 7) + b"CCDCase" + b"\xff" * 12 + top
+    top = record("C:\\work\\sample.cas", attrs=0x20000020, lead=0xFFFFFFFF, children=drives, schema=schema)
+    header = b"\xff\xff" + struct.pack("<HH", schema, 7) + b"CCDCase"
+    return header + (b"" if schema <= OLD_SCHEMA else b"\xff" * 12) + top
 
 
 HTML_PROPERTIES = (

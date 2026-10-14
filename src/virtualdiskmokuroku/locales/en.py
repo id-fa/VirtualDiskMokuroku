@@ -227,8 +227,8 @@ STRINGS: dict[str, str] = {
     "子の数が不正です": "Invalid number of children",
     "Virtual CD-ROM Case のカタログを読み取れません (位置 0x{pos:X} 付近で構造が合いません)":
         "Cannot read the Virtual CD-ROM Case catalog (structure mismatch near offset 0x{pos:X})",
-    "。形式バージョン {schema} には対応していません (確認済みは {SUPPORTED_SCHEMA})":
-        ". Format version {schema} is not supported (verified: {SUPPORTED_SCHEMA})",
+    "。形式バージョン {schema} には対応していません (確認済みは {OLD_SCHEMA} と {SUPPORTED_SCHEMA})":
+        ". Format version {schema} is not supported (verified: {OLD_SCHEMA} and {SUPPORTED_SCHEMA})",
     "Virtual CD-ROM Case のカタログ (.cas / .caz) ではありません": "Not a Virtual CD-ROM Case catalog (.cas / .caz)",
     "圧縮された .cas を展開できません ({error})": "Cannot decompress the compressed .cas ({error})",
     # ------------------------------------------------------------------ core: LZH

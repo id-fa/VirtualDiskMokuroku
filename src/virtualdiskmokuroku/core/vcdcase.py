@@ -15,7 +15,8 @@ CSV エクスポートと突き合わせて分かった構造で、意味の分�
               文字列の数 (u8。常に 2) とその文字列 (コメント, 分類),
               プロパティの数 (u8) とその文字列 (先頭は "HTML" "MODULE" などの種類。1 つ以上あれば、数に含まれない
               文字列がもう 1 つ続く),
-              不明 7 バイト, CRC の有無 (u16), CRC32 (u32), 子の数 (u32), 子レコード…,
+              不明 3 バイト, 本文の長さ (u32) と本文 (ほとんど 0。テキストファイルでコメントと同じ本文が
+              入っていたことがある), CRC の有無 (u16), CRC32 (u32), 子の数 (u32), 子レコード…,
               書庫内のエントリなら 圧縮後のサイズ (u32), 不明 1 バイト,
               ドライブかグループなら ラベル, 不明の文字列, シリアル (u32), ファイルシステム, 容量 (u64), 空き (u64),
                            短いラベル, クラスタあたりのセクタ数 (u32), セクタサイズ (u32)
@@ -29,6 +30,16 @@ CSV エクスポートと突き合わせて分かった構造で、意味の分�
 
 ドライブをまとめるグループ (フォルダ) は、属性に 0x00200000 が立つ名前付きのレコードで、子にドライブを持つ。
 ドライブと同じ形式の情報が後ろに続くが、中身はグループ名だけで、容量と空きは全ビット 1 になっている。
+
+スキーマ 9 (2001 年ごろの版で保存したファイル) は、次の点だけが違う::
+
+    ヘッダ    不明 12 バイトが無い
+    レコード  先頭の属性 (u32) の繰り返しと書庫の種類 (u16) が無く、書庫の種類は属性のビット 16〜23 に入る
+              (0x01 = LZH, 0x02 = ZIP, 0x20 = RAR など。グループの 0x00200000 と重なるが、グループはまだ無い)。
+              プロパティの後ろに、数に含まれない文字列が常に 1 つ続き、自動抽出したコメント (HTML のタイトルや
+              テキストファイルの本文) が入る (コメントと分類の 2 文字列は空)。その後ろは 不明 12 バイト, 子の数 (u32)
+              書庫内のエントリの末尾は 圧縮後のサイズ (u32) だけ
+    ドライブ情報は同じ並び。短いラベルの位置にはシリアルの文字列 ("086D-17EA") が入っていることがある
 
 ドライブレターは記録されていない。日時は 0 のほか、1970 年より前や範囲外の値が入っていることがある (いずれも「不明」)。
 コメントやプロパティは、Virtual CD-ROM Case がファイルから読んだバイト列のまま入っている
@@ -50,6 +61,7 @@ from .errors import CatalogError, ScanCancelled
 from ..i18n import tr
 
 SUPPORTED_SCHEMA = 12
+OLD_SCHEMA = 9  # 2001 年ごろの版。これ以下は冒頭の説明にある古い形式として読む
 DEFAULT_ENCODING = "cp932"
 
 _NOT_A_CASE = "Virtual CD-ROM Case のカタログ (.cas / .caz) ではありません"
@@ -58,19 +70,24 @@ _CLASS_NAME = b"CCDCase"
 _CLASS_HEAD = struct.Struct("<HHH")
 _HEADER_UNKNOWN = 12
 _RECORD_HEAD = struct.Struct("<IQIH3Q")
-_RECORD_UNKNOWN = 7
+_RECORD_HEAD_OLD = struct.Struct("<QI3Q")  # スキーマ 9: 先頭の属性の繰り返しと書庫の種類が無い
+_RECORD_UNKNOWN = 3
 _RECORD_TAIL = struct.Struct("<HII")
+_RECORD_TAIL_OLD = struct.Struct("<12xI")  # スキーマ 9: 不明 12 バイトと子の数
 _MEMBER_TAIL = struct.Struct("<IB")
+_MEMBER_TAIL_OLD = struct.Struct("<I")  # スキーマ 9: 末尾の 1 バイトが無い
 _DRIVE_VOLUME = struct.Struct("<QQ")
 _DRIVE_TAIL = struct.Struct("<II")
 _U16 = struct.Struct("<H")
 _U32 = struct.Struct("<I")
-_MIN_RECORD_SIZE = _RECORD_HEAD.size + 3 + _RECORD_UNKNOWN + _RECORD_TAIL.size
+_MIN_RECORD_SIZE = _RECORD_HEAD.size + 3 + _RECORD_UNKNOWN + _U32.size + _RECORD_TAIL.size
+_MIN_RECORD_SIZE_OLD = _RECORD_HEAD_OLD.size + 4 + _RECORD_TAIL_OLD.size
 
 _KIND_MEMBER = 0x80000000
 _KIND_ARCHIVE = 0x40000000
 _KIND_DRIVE = 0x10000000
 _KIND_GROUP = 0x00200000
+_OLD_ARCHIVE_SHIFT, _OLD_ARCHIVE_MASK = 16, 0x00FF0000  # スキーマ 9 の書庫の種類
 _MEDIA_SHIFT, _MEDIA_MASK = 24, 0x0F
 _ATTRIBUTE_MASK = 0x00FFFFFF & ~_KIND_GROUP
 _FILE_ATTRIBUTE_DIRECTORY = 0x10
@@ -301,15 +318,15 @@ def parse_case(
     if tag != 0xFFFF or name_length != len(_CLASS_NAME):
         raise CatalogError(tr(_NOT_A_CASE))
     try:
-        reader.take(name_length + _HEADER_UNKNOWN)
+        reader.take(name_length + (0 if schema <= OLD_SCHEMA else _HEADER_UNKNOWN))
         case = _parse_records(reader, schema, encoding, is_cancelled, progress)
         if reader.pos != len(data):
             raise IndexError(tr('末尾に読み残しがあります'))
         return case
     except (struct.error, IndexError) as error:
         message = tr('Virtual CD-ROM Case のカタログを読み取れません (位置 0x{pos:X} 付近で構造が合いません)').format(pos=reader.pos)
-        if schema != SUPPORTED_SCHEMA:
-            message += tr('。形式バージョン {schema} には対応していません (確認済みは {SUPPORTED_SCHEMA})').format(schema=schema, SUPPORTED_SCHEMA=SUPPORTED_SCHEMA)
+        if schema not in (OLD_SCHEMA, SUPPORTED_SCHEMA):
+            message += tr('。形式バージョン {schema} には対応していません (確認済みは {OLD_SCHEMA} と {SUPPORTED_SCHEMA})').format(schema=schema, OLD_SCHEMA=OLD_SCHEMA, SUPPORTED_SCHEMA=SUPPORTED_SCHEMA)
         raise CatalogError(message) from error
 
 
@@ -328,6 +345,9 @@ def read_case(
 def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled, progress) -> CaseFile:
     data_size = len(reader.data)
     count = 0
+    old_layout = schema <= OLD_SCHEMA
+    member_tail = _MEMBER_TAIL_OLD if old_layout else _MEMBER_TAIL
+    min_record_size = _MIN_RECORD_SIZE_OLD if old_layout else _MIN_RECORD_SIZE
 
     def read_record() -> tuple:
         nonlocal count
@@ -337,17 +357,31 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled, pr
                 raise ScanCancelled()
             if progress is not None:
                 progress("parse", count)
-        _same, size, kind, archive_type, _atime, mtime, ctime = reader.unpack(_RECORD_HEAD)
+        if old_layout:
+            size, kind, _atime, mtime, ctime = reader.unpack(_RECORD_HEAD_OLD)
+            archive_type = (kind & _OLD_ARCHIVE_MASK) >> _OLD_ARCHIVE_SHIFT
+            kind &= ~_OLD_ARCHIVE_MASK
+        else:
+            _same, size, kind, archive_type, _atime, mtime, ctime = reader.unpack(_RECORD_HEAD)
         name = reader.string()
         strings = [reader.string() for _ in range(reader.byte())]
         properties = [_raw(reader.string()) for _ in range(reader.byte())]
-        if properties:
-            properties.append(_raw(reader.string()))
-        reader.take(_RECORD_UNKNOWN)
-        has_crc, crc, children = reader.unpack(_RECORD_TAIL)
-        if children * _MIN_RECORD_SIZE > data_size - reader.pos:
+        if old_layout:
+            text = _raw(reader.string())  # 自動抽出したコメント
+            (children,) = reader.unpack(_RECORD_TAIL_OLD)
+            has_crc, crc = 0, 0
+        else:
+            if properties:
+                properties.append(_raw(reader.string()))
+            reader.take(_RECORD_UNKNOWN)
+            (text_length,) = reader.unpack(_U32)
+            text = reader.take(text_length)
+            has_crc, crc, children = reader.unpack(_RECORD_TAIL)
+        if children * min_record_size > data_size - reader.pos:
             raise IndexError(tr('子の数が不正です'))
         comment = _raw(strings[0]) if strings else b""
+        if not comment:
+            comment = text  # スキーマ 12 の本文はコメントと同じ内容だったので、コメントが無いときだけ使う
         category = _raw(strings[1]) if len(strings) > 1 else b""
         return (
             size, kind, archive_type, _filetime(mtime), _filetime(ctime), name, comment, category, properties,
@@ -362,7 +396,7 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled, pr
         if frame.remaining == 0:
             stack.pop()
             if frame.is_member:
-                reader.unpack(_MEMBER_TAIL)
+                reader.unpack(member_tail)
             if frame.has_info:
                 _read_drive_info(reader, frame, encoding)
                 if frame.new_drive is not None:
@@ -416,7 +450,7 @@ def _parse_records(reader: _Reader, schema: int, encoding: str, is_cancelled, pr
         if children or has_info:
             stack.append(child)
         elif child.is_member:
-            reader.unpack(_MEMBER_TAIL)
+            reader.unpack(member_tail)
     if progress is not None:
         progress("parse", count)
     return case

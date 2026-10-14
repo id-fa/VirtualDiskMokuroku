@@ -141,8 +141,8 @@ What is imported:
 - Imported drives are always added as new drives. Connecting the real drive later and choosing "Update this drive"
   updates it as the same drive, matched by label and serial number (the imported comments are not kept after an
   update)
-- The `.cas` format is not documented, so it is read based on the analysis of real files (format version 12).
-  Items whose meaning is unknown are not imported. If a file cannot be read, an error is shown and the catalog is
+- The `.cas` format is not documented, so it is read based on the analysis of real files (format version 12,
+  and version 9 written by releases from around 2001). Items whose meaning is unknown are not imported. If a file cannot be read, an error is shown and the catalog is
   left unchanged
 
 ### Importing Media Stencil record files (alpha)
