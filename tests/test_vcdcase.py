@@ -2,6 +2,7 @@
 
 import hashlib
 import os
+import sys
 import tempfile
 
 import pytest
@@ -326,6 +327,19 @@ def test_cli_import(cas_path, tmp_path, monkeypatch, capsys):
     assert cli.main(["find", str(target), "海"]) == 0
     assert "[BACKUP_2003] ?:\\写真\\海.jpg" in capsys.readouterr().out
     assert cli.main(["import", str(tmp_path / "missing.cas"), str(target)]) == 1
+
+    # 標準エラーが閉じられていても (パイプの先が終了した場合など) 進捗やエラーの出力で落ちない
+    class BrokenStream:
+        def write(self, _text):
+            raise OSError(22, "Invalid argument")
+
+        def flush(self):
+            pass
+
+    monkeypatch.setattr(sys, "stderr", BrokenStream())
+    assert cli.main(["import", str(cas_path), str(target)]) == 0
+    assert cli.main(["import", str(tmp_path / "missing.cas"), str(target)]) == 1
+    assert "2 ドライブを取り込みました" in capsys.readouterr().out
 
 
 def test_compressed_case_files(tmp_path, monkeypatch):

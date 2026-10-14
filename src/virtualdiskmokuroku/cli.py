@@ -81,15 +81,22 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _progress_printer():
-    """進捗を標準エラーへ出す関数を返す。段階の切り替わり以外は 1 秒に 1 回に抑える。"""
+    """進捗を標準エラーへ出す関数を返す。段階の切り替わり以外は 1 秒に 1 回に抑える。
+
+    出力先が閉じられていても (パイプの先が終了した場合など) 処理は続ける: 書けなかったら以後は出さない。
+    """
     last_report = 0.0
+    broken = False
 
     def progress(phase: str, count: int) -> None:
-        nonlocal last_report
+        nonlocal last_report, broken
         now = time.monotonic()
-        if phase.startswith(("source:", "drive:")) or now - last_report > 1.0:
+        if not broken and (phase.startswith(("source:", "drive:")) or now - last_report > 1.0):
             last_report = now
-            print(f"  {phase} {count:,}" if count else f"  {phase}", file=sys.stderr)
+            try:
+                print(f"  {phase} {count:,}" if count else f"  {phase}", file=sys.stderr)
+            except OSError:
+                broken = True
 
     return progress
 
@@ -190,7 +197,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except (CatalogError, EsError, OSError) as error:
-        print(tr('エラー: {error}').format(error=error), file=sys.stderr)
+        try:
+            print(tr('エラー: {error}').format(error=error), file=sys.stderr)
+        except OSError:
+            pass  # 標準エラーが閉じられている (終了コードで伝える)
         return 1
     finally:
         for catalog in _opened:
