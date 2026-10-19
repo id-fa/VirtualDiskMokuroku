@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
@@ -43,6 +44,10 @@ _ES_EXIT_NOT_RUNNING = 8
 
 _CREATE_NO_WINDOW = 0x08000000
 
+# Everything 本体を起動してから接続できるようになるまで待つ上限 (秒)。起動時に管理者昇格の確認ダイアログが出る
+# 設定では、ユーザーがそれに応答するまで接続できないので余裕を持たせる
+EVERYTHING_START_TIMEOUT = 180.0
+
 
 class EsError(Exception):
     """es.exe の実行に失敗した。"""
@@ -68,6 +73,12 @@ class RawEntry:
     attrs: int | None = None
 
 
+def _nearby_dirs() -> tuple[Path, Path]:
+    """アプリ近傍として探すフォルダ (実行ファイルまたはスクリプトのフォルダと、カレントフォルダ)。"""
+    app_dir = Path(sys.argv[0]).resolve().parent if sys.argv and sys.argv[0] else Path.cwd()
+    return app_dir, Path.cwd()
+
+
 def find_es_exe(configured: str | os.PathLike[str] | None = None) -> Path | None:
     """es.exe を探す。設定値 → PATH → アプリ近傍 → 既定のインストール先の順。"""
     candidates: list[Path] = []
@@ -76,8 +87,7 @@ def find_es_exe(configured: str | os.PathLike[str] | None = None) -> Path | None
     on_path = shutil.which("es.exe")
     if on_path:
         candidates.append(Path(on_path))
-    app_dir = Path(sys.argv[0]).resolve().parent if sys.argv and sys.argv[0] else Path.cwd()
-    for base in (app_dir, Path.cwd()):
+    for base in _nearby_dirs():
         candidates.append(base / "es.exe")
         candidates.append(base / "everything_portable" / "es.exe")
     for env in ("ProgramFiles", "ProgramFiles(x86)", "LOCALAPPDATA"):
@@ -89,6 +99,63 @@ def find_es_exe(configured: str | os.PathLike[str] | None = None) -> Path | None
         if candidate.is_file():
             return candidate
     return None
+
+
+def find_everything_exe(es_path: str | os.PathLike[str] | None = None) -> Path | None:
+    """Everything 本体 (Everything.exe) を探す。es.exe と同じフォルダ → アプリ近傍の ``everything_portable\\`` の順。
+
+    見つかったものを起動すれば、その es.exe から接続できる見込みが高い場所だけを探す (既定のインストール先は
+    探さない。そこにあるものは普通スタートアップで起動しているか、ユーザーが意図して止めている)。
+    """
+    candidates: list[Path] = []
+    if es_path:
+        candidates.append(Path(es_path).parent / "Everything.exe")
+    for base in _nearby_dirs():
+        candidates.append(base / "everything_portable" / "Everything.exe")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def start_everything(exe: str | os.PathLike[str], instance: str | None = None) -> subprocess.Popen:
+    """Everything 本体をバックグラウンド (タスクトレイ常駐) で起動する。
+
+    起動しただけで戻るので、接続できるようになるまでは ``wait_for_everything`` で待つ。``instance`` を
+    指定すると同じ名前のインスタンスとして起動する (es.exe 側の ``-instance`` と揃える)。
+    「管理者として実行」が必要な設定のときなど、起動できなければ OSError になる。
+    """
+    exe = Path(exe)
+    command = [str(exe), "-startup"]
+    if instance:
+        command += ["-instance", instance]
+    return subprocess.Popen(
+        command,
+        cwd=str(exe.parent),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        close_fds=True,
+        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+    )
+
+
+def wait_for_everything(
+    es: EsClient, timeout: float = EVERYTHING_START_TIMEOUT, *,
+    should_stop: Callable[[], bool] | None = None, interval: float = 1.0,
+) -> bool:  # fmt: skip
+    """Everything に接続できるようになるまで待つ。``timeout`` 秒以内に応答しなければ False。
+
+    ``interval`` 秒ごとに es.exe を実行して確かめる。``should_stop`` は待っている間に繰り返し呼ばれ、True を
+    返すと待つのをやめる (GUI ではここでイベントを処理し、キャンセルを見る)。
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        if es.is_everything_running():
+            return True
+        if (should_stop is not None and should_stop()) or time.monotonic() >= deadline:
+            return False
+        time.sleep(interval)
 
 
 def _to_int(value: str) -> int | None:
@@ -236,6 +303,14 @@ class EsClient:
 
     def everything_version(self) -> str:
         return self._run(["-get-everything-version"])
+
+    def is_everything_running(self) -> bool:
+        """Everything 本体に接続できるか。接続できない以外のエラー (es.exe の不具合など) はそのまま送出する。"""
+        try:
+            self.everything_version()
+        except EverythingNotRunningError:
+            return False
+        return True
 
     def es_version(self) -> str:
         return self._run(["-version"])

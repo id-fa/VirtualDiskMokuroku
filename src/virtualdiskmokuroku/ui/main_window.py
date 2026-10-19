@@ -1593,7 +1593,7 @@ class MainWindow(QMainWindow):
 
     def everything_help_box(self) -> QMessageBox:
         """「Everything の導入方法」のメッセージボックス。URL はクリックで既定のブラウザが開く。"""
-        text = tr('このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。')  # fmt: skip
+        text = tr('このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。es.exe と同じフォルダに Everything.exe があれば、起動していないときにスキャン開始時に起動を確認します。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。')  # fmt: skip
         body = html.escape(text).replace("\n", "<br>")
         body = body.replace(_EVERYTHING_URL, f'<a href="{_EVERYTHING_URL}">{_EVERYTHING_URL}</a>')
         box = QMessageBox(QMessageBox.Icon.Information, tr('Everything の導入方法'), body, QMessageBox.StandardButton.Ok, self)

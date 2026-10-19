@@ -61,6 +61,51 @@ def test_parse_export_csv(tmp_path):
     assert (entries[2].size, entries[2].mtime, entries[2].attrs) == (None, None, None)
 
 
+def fake_everything(folder):
+    """偽の es.exe と Everything.exe (バッチファイル)。``started`` ファイルがあるときだけ Everything が起動中とみなす。
+
+    偽の es は Everything 未起動なら es.exe と同じ終了コード 8 を返し、起動中ならバージョン文字列を出力する。
+    偽の Everything は受け取った引数を ``started`` に書く。戻り値は (es のパス, Everything のパス)。
+    """
+    es = folder / "es.bat"
+    es.write_bytes(b'@echo off\r\nif exist "%~dp0started" (echo 1.5.0.0&exit /b 0) else exit /b 8\r\n')
+    everything = folder / "Everything.bat"
+    everything.write_bytes(b'@echo off\r\necho %* > "%~dp0started"\r\n')
+    return es, everything
+
+
+def test_find_and_start_everything(tmp_path, monkeypatch):
+    from virtualdiskmokuroku.core import es_client
+    from virtualdiskmokuroku.core.es_client import EsClient, find_everything_exe, start_everything, wait_for_everything
+
+    folder = tmp_path / "everything_portable"
+    folder.mkdir()
+    es, everything = fake_everything(folder)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    # Everything.exe は es.exe と同じフォルダ → アプリ近傍の everything_portable\ の順に探す
+    monkeypatch.setattr(es_client, "_nearby_dirs", lambda: (elsewhere, elsewhere))
+    assert find_everything_exe(es) is None
+    (folder / "Everything.exe").write_bytes(b"")
+    assert find_everything_exe(es) == folder / "Everything.exe"
+    assert find_everything_exe(elsewhere / "es.exe") is None
+    monkeypatch.setattr(es_client, "_nearby_dirs", lambda: (elsewhere, tmp_path))
+    assert find_everything_exe(elsewhere / "es.exe") == folder / "Everything.exe"
+    assert find_everything_exe(None) == folder / "Everything.exe"
+
+    client = EsClient(es, "1.5a")
+    assert not client.is_everything_running()
+    assert not wait_for_everything(client, timeout=0.3, interval=0.05)
+    stopped = []
+    assert not wait_for_everything(client, timeout=10, should_stop=lambda: stopped.append(1) or True) and stopped == [1]
+
+    # 起動はバックグラウンドで、es.exe と同じインスタンス名を渡す。接続できるようになるまで待てる
+    start_everything(everything, client.instance).wait(10)
+    assert wait_for_everything(client, timeout=10)
+    assert client.is_everything_running() and client.everything_version() == "1.5.0.0"
+    assert (folder / "started").read_text().split() == ["-startup", "-instance", "1.5a"]
+
+
 # ---------------------------------------------------------------------------- drive DB
 @pytest.fixture
 def scanned(tmp_path):

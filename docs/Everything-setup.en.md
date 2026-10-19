@@ -17,6 +17,9 @@ Neither is bundled with this application, so set them up as follows.
 ## 2. Keep Everything running
 
 - Everything must be running while scanning (sitting in the notification area is fine).
+  - If `Everything.exe` is in the same folder as es.exe (or in `everything_portable\`) and is not running, a dialog
+    asks whether to start it when a scan begins and when you press "Test connection". Choosing "Yes" starts it in the
+    background (notification area) and the scan begins once it responds.
 - Indexing NTFS drives needs **administrator rights** or the **Everything service**.
   Enable "Everything Service" under Tools → Options → General so the index is available even when Everything runs
   without elevation.

@@ -33,6 +33,7 @@ from ..core.errors import CatalogError
 from ..core.es_client import EsClient, EsError, find_es_exe
 from ..core.settings import AppSettings
 from ..i18n import LANGUAGE_AUTO, LANGUAGE_EN, LANGUAGE_JA, tr
+from .everything_launcher import offer_to_start_everything
 
 
 def ask_password(parent, title: str, label: str) -> str | None:
@@ -432,6 +433,8 @@ class AppSettingsDialog(QDialog):
             return
         try:
             client = EsClient(es_path, self._instance.text().strip() or None, timeout=10)
+            # 起動していなければ起動を提案する。断られたときは下の everything_version() がこれまでどおりのエラーになる
+            offer_to_start_everything(self, client, self.windowTitle())
             self._test_result.setText(f"OK: {es_path}\nes.exe {client.es_version()} / Everything {client.everything_version()}")
         except EsError as error:
             self._test_result.setText(f"{es_path}\n{error}")

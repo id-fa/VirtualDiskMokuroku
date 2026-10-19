@@ -29,11 +29,12 @@ from PySide6.QtWidgets import (
 from ..core import scanner
 from ..core.catalog import Catalog, default_drive_name
 from ..core.errors import ScanCancelled
-from ..core.es_client import EsClient, EsError, find_es_exe
+from ..core.es_client import EsClient, EsError, find_es_exe, wait_for_everything
 from ..core.formatting import format_size
 from ..core.settings import AppSettings
 from ..core.volume import VolumeInfo, get_volume_info, list_volumes
 from ..pipeline import ScanOutcome, format_context_errors, scan_into_catalog
+from .everything_launcher import ask_to_start_everything
 from .style import apply_selection_style
 from ..i18n import tr
 
@@ -57,7 +58,7 @@ class ScanWorker(QThread):
     failed = Signal(str)  # 空文字はキャンセル
 
     def __init__(self, catalog: Catalog, root: str, drive_id: str | None, name: str, source: str,
-                 es: EsClient | None, parent=None):  # fmt: skip
+                 es: EsClient | None, parent=None, *, wait_for_everything: bool = False):  # fmt: skip
         super().__init__(parent)
         self._catalog = catalog
         self._root = root
@@ -65,6 +66,7 @@ class ScanWorker(QThread):
         self._name = name
         self._source = source
         self._es = es
+        self._wait_for_everything = wait_for_everything  # 起動したばかりの Everything に接続できるまで待ってから始める
         self._cancel = threading.Event()
 
     def cancel(self) -> None:
@@ -72,6 +74,12 @@ class ScanWorker(QThread):
 
     def run(self) -> None:
         try:
+            if self._wait_for_everything and self._es is not None:
+                self.progress.emit("everything:start", 0)
+                # 時間内に応答しなくてもそのまま進める (自動なら直接走査へ切り替わり、警告が付く)
+                wait_for_everything(self._es, should_stop=self._cancel.is_set)
+                if self._cancel.is_set():
+                    raise ScanCancelled()
             outcome = scan_into_catalog(
                 self._catalog,
                 self._root,
@@ -109,6 +117,7 @@ class ScanDialog(QDialog):
         self._root_volume: VolumeInfo | None = None  # スキャン対象が属するボリューム
         self._unmatched_ids: set[str] = set()  # 更新先候補のうち、同定が一致しないドライブ
         self._worker: ScanWorker | None = None
+        self._everything_offered = False  # Everything の起動確認はこのダイアログで 1 回だけ出す
         self._context_total = 0
         self._in_context_phase = False
         self.updated_drive_id: str | None = None  # スキャン成功時に設定
@@ -301,6 +310,14 @@ class ScanDialog(QDialog):
         except EsError:
             return None
 
+    def _needs_everything(self, source: str) -> bool:
+        """Everything の起動確認を出すべきか。自動のときは、Everything がインデックスしない CD/DVD では出さない。"""
+        if self._everything_offered:
+            return False
+        if source == scanner.SOURCE_AUTO and self._root_volume is not None and self._root_volume.drive_type == "cdrom":
+            return False
+        return True
+
     def _start(self) -> None:
         root = self._root
         if root is None:
@@ -323,12 +340,19 @@ class ScanDialog(QDialog):
                 tr('es.exe が見つかりません。「設定」→「アプリ設定」で es.exe の場所を指定してください。'),
             )  # fmt: skip
             return
+        wait_everything = False
+        if es is not None and self._needs_everything(source):
+            # 起動していなければ起動を提案する。起動したら、接続できるまでワーカー側で待つ (進捗に出し、キャンセルできる)。
+            # 断られても (起動できなくても) そのまま続け、Everything 無しの扱いはスキャン側に任せる (自動なら直接走査へ)
+            self._everything_offered = True
+            wait_everything = ask_to_start_everything(self, es, self.windowTitle())
         self._set_running(True)
         self._context_total = 0
         self._in_context_phase = False
         self._error_lines, self._error_log = [], ""
         self._errors_button.setVisible(False)
-        self._worker = ScanWorker(self._catalog, root, drive_id, self._name.text().strip(), source, es, self)
+        self._worker = ScanWorker(self._catalog, root, drive_id, self._name.text().strip(), source, es, self,
+                                  wait_for_everything=wait_everything)  # fmt: skip
         self._worker.progress.connect(self._on_progress)
         self._worker.succeeded.connect(self._on_succeeded)
         self._worker.failed.connect(self._on_failed)
@@ -344,7 +368,9 @@ class ScanDialog(QDialog):
         self._progress.setRange(0, 0)
 
     def _on_progress(self, phase: str, count: int) -> None:
-        if phase.startswith("source:"):
+        if phase == "everything:start":
+            self._status.setText(tr('Everything を起動しています…'))
+        elif phase.startswith("source:"):
             text = tr('ファイルリストを取得中… (直接走査)')
             if phase.endswith(scanner.SOURCE_EVERYTHING):
                 text = tr('ファイルリストを取得中… (Everything)')

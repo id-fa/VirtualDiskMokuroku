@@ -359,10 +359,10 @@ STRINGS: dict[str, str] = {
         "The copy will be written as an unencrypted catalog. Anyone can read its contents. Continue?",
     "復号して書き出す": "Export decrypted copy",
     "Everything の導入方法": "How to set up Everything",
-    "このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。":
+    "このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。es.exe と同じフォルダに Everything.exe があれば、起動していないときにスキャン開始時に起動を確認します。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。":
         "This application uses Everything by voidtools to read file lists.\n\n"
         "1. Get Everything and its command line interface (ES: es.exe) from https://www.voidtools.com/.\n"
-        "2. Keep Everything running (indexing NTFS drives needs administrator rights or the Everything service).\n"
+        "2. Keep Everything running (indexing NTFS drives needs administrator rights or the Everything service). If Everything.exe is in the same folder as es.exe and is not running, you are asked to start it when a scan begins.\n"
         "3. Put es.exe in a folder on PATH or next to Everything, or set its location in Settings → Application settings.\n"
         "4. Use \"Test connection\" in Application settings to check that it works.\n\n"
         "Drives that Everything does not index (CD/DVD, FAT/exFAT, etc.), or any drive when Everything is unavailable, are read by direct scan automatically.",
@@ -536,6 +536,12 @@ STRINGS: dict[str, str] = {
     "新規に追加": "Add as new",
     "es.exe が見つかりません。「設定」→「アプリ設定」で es.exe の場所を指定してください。":
         "es.exe not found. Set its location in Settings → Application settings.",
+    # ------------------------------------------------------------------ ui/everything_launcher.py
+    "Everything が起動していません。起動しますか?\n\n{exe}": "Everything is not running. Start it?\n\n{exe}",
+    "Everything を起動できませんでした: {error}": "Could not start Everything: {error}",
+    "Everything を起動しています…": "Starting Everything…",
+    "Everything を起動しましたが、応答がありません。Everything 1.5 アルファ版の場合は「アプリ設定」の「Everything インスタンス名」を確認してください。":
+        "Everything was started but does not respond. For Everything 1.5 alpha, check \"Everything instance name\" in Application settings.",
     "ファイルリストを取得中… (Everything)": "Reading the file list… (Everything)",
     "\nEverything が作成日時・属性をインデックスしていない場合、ファイル数に応じて数十秒〜数分かかります(カタログ設定で取得をオフにすると数秒で終わります)。":
         "\nIf Everything does not index creation times and attributes, this takes from tens of seconds to several minutes depending on the number of files (turn them off in Catalog settings to finish in seconds).",

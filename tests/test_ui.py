@@ -20,7 +20,7 @@ from virtualdiskmokuroku.core.settings import AppSettings  # noqa: E402
 from virtualdiskmokuroku.ui.main_window import ROLE_DIR, MainWindow  # noqa: E402
 from virtualdiskmokuroku.ui.models import COL_LOCATION, COL_SIZE  # noqa: E402
 
-from test_core import make_tree  # noqa: E402
+from test_core import fake_everything, make_tree  # noqa: E402
 
 
 @pytest.fixture(scope="module")
@@ -269,6 +269,130 @@ def test_everything_help_has_clickable_link(window):
     label = box.findChild(QLabel, "qt_msgbox_label")
     assert label is not None and label.openExternalLinks()  # クリックで既定のブラウザが開く
     box.deleteLater()
+
+
+def test_offer_to_start_everything(app, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox, QWidget
+
+    from virtualdiskmokuroku.core.es_client import EsClient
+    from virtualdiskmokuroku.ui import everything_launcher
+
+    folder = tmp_path / "everything_portable"
+    folder.mkdir()
+    es_bat, everything_bat = fake_everything(folder)
+    monkeypatch.setattr(everything_launcher, "find_everything_exe", lambda _es_path: everything_bat)
+    questions, warnings = [], []
+    answers = [QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes]
+    monkeypatch.setattr(QMessageBox, "question", lambda _parent, _title, text, *args: (questions.append(text), answers.pop(0))[1])
+    monkeypatch.setattr(QMessageBox, "warning", lambda _parent, _title, text, *args: warnings.append(text))
+    client = EsClient(es_bat, "1.5a")
+    parent = QWidget()
+    offer = everything_launcher.offer_to_start_everything
+
+    # 「いいえ」→ 起動しない
+    assert offer(parent, client, "t") is False
+    assert "Everything が起動していません" in questions[-1] and str(everything_bat) in questions[-1]
+    assert not (folder / "started").exists()
+    # 「はい」→ 起動して、接続できるようになるまで待ってから True
+    assert offer(parent, client, "t") is True
+    assert len(questions) == 2 and warnings == []
+    assert (folder / "started").read_text().split() == ["-startup", "-instance", "1.5a"]
+    # 起動済みなら聞かない
+    assert offer(parent, client, "t") is True and len(questions) == 2
+
+    # Everything.exe が見つからなければ聞かない
+    (folder / "started").unlink()
+    monkeypatch.setattr(everything_launcher, "find_everything_exe", lambda _es_path: None)
+    assert offer(parent, client, "t") is False and len(questions) == 2
+    # 起動できない (管理者権限が必要など) → 警告
+    monkeypatch.setattr(everything_launcher, "find_everything_exe", lambda _es_path: everything_bat)
+    monkeypatch.setattr(everything_launcher, "start_everything", lambda *_args: (_ for _ in ()).throw(OSError("要求された操作には管理者権限が必要です")))
+    answers.append(QMessageBox.StandardButton.Yes)
+    assert offer(parent, client, "t") is False and len(questions) == 3
+    assert "起動できませんでした" in warnings[-1] and "管理者権限" in warnings[-1]
+    # 起動したのに応答しない → 警告 (インスタンス名の確認を促す)
+    monkeypatch.setattr(everything_launcher, "start_everything", lambda *_args: None)
+    monkeypatch.setattr(everything_launcher, "START_TIMEOUT", 0.3)
+    answers.append(QMessageBox.StandardButton.Yes)
+    assert offer(parent, client, "t") is False and len(questions) == 4
+    assert "応答がありません" in warnings[-1] and "インスタンス名" in warnings[-1]
+    parent.deleteLater()
+
+
+def test_scan_dialog_asks_to_start_everything_once(window, tmp_path, monkeypatch):
+    from virtualdiskmokuroku.core.volume import VolumeInfo
+    from virtualdiskmokuroku.ui import scan_dialog
+    from virtualdiskmokuroku.ui.scan_dialog import ScanDialog, ScanWorker
+
+    folder = tmp_path / "everything_portable"
+    folder.mkdir()
+    es_bat, _everything_bat = fake_everything(folder)
+    settings = AppSettings()
+    settings.es_path = str(es_bat)
+    offered = []
+    monkeypatch.setattr(scan_dialog, "ask_to_start_everything", lambda _parent, es, _title: offered.append(es.es_path) or False)
+    monkeypatch.setattr(ScanWorker, "start", lambda self: None)  # 実際のスキャンはしない
+
+    dialog = ScanDialog(window.catalog, settings, window)
+    dialog._root = str(tmp_path / "one")
+    dialog._root_volume = VolumeInfo(root="X:\\", drive_type="fixed", ready=True)
+    dialog._source.setCurrentIndex(dialog._source.findData(scanner.SOURCE_AUTO))
+    assert dialog._needs_everything(scanner.SOURCE_AUTO) and dialog._needs_everything(scanner.SOURCE_EVERYTHING)
+    dialog._start()
+    assert offered == [es_bat]
+    # 同じダイアログでは 2 回目以降は聞かない
+    assert not dialog._needs_everything(scanner.SOURCE_AUTO)
+    dialog._worker = None
+    dialog._start()
+    assert len(offered) == 1
+    # 直接走査では es.exe を使わないので聞かない。自動の CD/DVD も Everything はインデックスしないので聞かない
+    dialog._everything_offered = False
+    dialog._worker = None
+    dialog._source.setCurrentIndex(dialog._source.findData(scanner.SOURCE_WALK))
+    dialog._start()
+    assert len(offered) == 1
+    dialog._root_volume = VolumeInfo(root="X:\\", drive_type="cdrom", ready=True)
+    assert not dialog._needs_everything(scanner.SOURCE_AUTO) and dialog._needs_everything(scanner.SOURCE_EVERYTHING)
+    dialog._worker = None
+    dialog.close()
+    dialog.deleteLater()
+
+
+def test_scan_worker_waits_for_started_everything(window, tmp_path):
+    from virtualdiskmokuroku.core.es_client import EsClient
+    from virtualdiskmokuroku.ui.scan_dialog import ScanWorker
+
+    folder = tmp_path / "everything_portable"
+    folder.mkdir()
+    es_bat, _everything_bat = fake_everything(folder)
+    tree = tmp_path / "tree"
+    tree.mkdir()
+    make_tree(tree)
+
+    def run(cancel: bool):
+        outcome, phases = {}, []
+        worker = ScanWorker(window.catalog, str(tree), None, "待機", scanner.SOURCE_AUTO, EsClient(es_bat), wait_for_everything=True)
+        worker.progress.connect(lambda phase, _count: phases.append(phase))
+        worker.succeeded.connect(lambda done: outcome.update(result=done.result))
+        worker.failed.connect(lambda message: outcome.update(error=message))
+        worker.start()
+        if cancel:
+            assert wait_until(lambda: "everything:start" in phases)
+            worker.cancel()
+        assert wait_until(lambda: worker.isFinished() and outcome, timeout=20), outcome
+        return outcome, phases
+
+    # 起動待ちの間にキャンセル → 通常のキャンセルと同じ (失敗メッセージは空)
+    outcome, phases = run(cancel=True)
+    assert outcome == {"error": ""} and phases == ["everything:start"]
+
+    # 接続できたら通常どおり進む (偽の es は件数を返せないので直接走査に切り替わる)
+    (folder / "started").write_text("")
+    outcome, phases = run(cancel=False)
+    assert "error" not in outcome, outcome
+    assert phases[:2] == ["everything:start", "source:" + scanner.SOURCE_WALK]
+    assert outcome["result"].source == scanner.SOURCE_WALK and any("Everything を利用できない" in w for w in outcome["result"].warnings)
+    window._after_catalog_changed(None)
 
 
 def test_open_folder_in_explorer(window, tmp_path, monkeypatch):
