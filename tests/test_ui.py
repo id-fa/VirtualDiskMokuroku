@@ -1319,3 +1319,15 @@ def test_deferred_save_prompts_on_close(window, tmp_path, monkeypatch):
     monkeypatch.setattr(QMessageBox, "exec", lambda self: pytest.fail("確認は出ないはず"))
     window.close_catalog()
     assert window.catalog is None
+
+
+def test_app_icon_has_all_sizes(app):
+    """アプリのアイコンは exe の埋め込みとウィンドウ左上・タスクバーで同じファイルを使い、小さいサイズも持つ。"""
+    from virtualdiskmokuroku.ui.app import ICON_PATH, app_icon
+
+    assert ICON_PATH.is_file()
+    icon = app_icon()
+    assert not icon.isNull()
+    sizes = {(size.width(), size.height()) for size in icon.availableSizes()}
+    assert {(16, 16), (32, 32), (48, 48), (256, 256)} <= sizes
+    assert not icon.pixmap(16, 16).isNull()

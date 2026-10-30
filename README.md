@@ -1,4 +1,4 @@
-# VirtualDiskMokuroku
+# Virtual Disk Mokuroku
 
 日本語 | [English](README.en.md)
 

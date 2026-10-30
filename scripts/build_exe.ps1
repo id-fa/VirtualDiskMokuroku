@@ -9,10 +9,15 @@ param([string[]]$Exclude = @())
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
+# アプリのアイコン (作り直すときは scripts\make_icon.py)。exe に埋め込む (エクスプローラ用) のと、
+# 起動時にウィンドウへ設定する (左上・タスクバー用) のとで同じファイルを使う
+$icon = Join-Path $root "src\virtualdiskmokuroku\ui\VirtualDiskMokuroku.ico"
 
 $arguments = @(
     "-m", "PyInstaller", "--noconfirm", "--clean", "--windowed",
     "--name", "VirtualDiskMokuroku",
+    "--icon", $icon,
+    "--add-data", "$icon;virtualdiskmokuroku\ui",
     "--paths", (Join-Path $root "src"),
     "--collect-submodules", "virtualdiskmokuroku",
     "--distpath", (Join-Path $root "dist"),
