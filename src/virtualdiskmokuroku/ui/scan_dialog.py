@@ -112,6 +112,8 @@ class ScanDialog(QDialog):
         self._catalog = catalog
         self._app_settings = app_settings
         self._target_drive_id = target_drive_id
+        # 「このドライブを更新」から開いたときは、更新が済んだら他のドライブを選べないようにする (閉じるだけ)
+        self._locked = False
         self._volumes: list[VolumeInfo] = []
         self._root: str | None = None  # スキャン対象 ("E:\\" またはフォルダ)
         self._root_volume: VolumeInfo | None = None  # スキャン対象が属するボリューム
@@ -287,7 +289,7 @@ class ScanDialog(QDialog):
                     self._target.setCurrentIndex(index)
         self._target.blockSignals(False)
         self._on_target_changed()
-        self._start_button.setEnabled(root is not None and self._worker is None)
+        self._start_button.setEnabled(root is not None and self._worker is None and not self._locked)
 
     def _on_target_changed(self) -> None:
         drive_id = self._target.currentData()
@@ -360,9 +362,10 @@ class ScanDialog(QDialog):
         self._worker.start()
 
     def _set_running(self, running: bool) -> None:
+        editable = not running and not self._locked
         for widget in (self._table, self._target, self._name, self._source, self._refresh_button, self._folder_button):
-            widget.setEnabled(not running)
-        self._start_button.setEnabled(not running)
+            widget.setEnabled(editable)
+        self._start_button.setEnabled(editable)
         self._close_button.setText(tr('キャンセル') if running else tr('閉じる'))
         self._progress.setVisible(running)
         self._progress.setRange(0, 0)
@@ -422,6 +425,9 @@ class ScanDialog(QDialog):
                 if self._error_log:
                     lines.append(tr('エラーの一覧をログに書きました: {path}').format(path=self._error_log))
         lines += [tr('注意: {warning}').format(warning=warning) for warning in result.warnings]
+        if self._target_drive_id:
+            self._locked = True
+            lines.append(tr('他のドライブを続けて追加・更新するには、「ドライブの追加 / 更新」から開いてください。'))
         self._status.setText("\n".join(lines))
 
     def _show_errors(self) -> None:

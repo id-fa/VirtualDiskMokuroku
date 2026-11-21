@@ -567,6 +567,7 @@ STRINGS: dict[str, str] = {
     "\nEverything が作成日時・属性をインデックスしていない場合、ファイル数に応じて数十秒〜数分かかります(カタログ設定で取得をオフにすると数秒で終わります)。":
         "\nIf Everything does not index creation times and attributes, this takes from tens of seconds to several minutes depending on the number of files (turn them off in Catalog settings to finish in seconds).",
     "「{name}」を登録しました。": "\"{name}\" has been registered.",
+    "他のドライブを続けて追加・更新するには、「ドライブの追加 / 更新」から開いてください。": "To add or update another drive, open the dialog from \"Add / update drive\".",
     "ファイル {file_count:,} / フォルダ {dir_count:,} / 合計 {total_size} (無視 {ignored_count:,} 件、取得元: {0})":
         "Files {file_count:,} / folders {dir_count:,} / total {total_size} (ignored {ignored_count:,}, source: {0})",
     "拡張コンテキストの取得は途中でキャンセルされました。取得できた分までを登録しています(次回このドライブを更新すると、残りのファイルだけを取得します)。":

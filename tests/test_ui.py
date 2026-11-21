@@ -1269,6 +1269,28 @@ def test_scan_dialog_registers_folder(window, tmp_path, monkeypatch):
     dialog = ScanDialog(catalog, window.app_settings, window, target_drive_id=drive["id"])
     assert dialog._root.casefold() == str(folder).casefold() and dialog._target.currentData() == drive["id"]
     assert dialog._target.itemText(dialog._target.currentIndex()) == "更新: 書類フォルダ"
+    # 「このドライブを更新」から開いたときは、更新が終わると他のドライブを選べない (閉じるだけ)
+    dialog._source.setCurrentIndex(dialog._source.findData(scanner.SOURCE_WALK))
+    dialog._start()
+    assert wait_until(lambda: dialog._worker is None, timeout=20)
+    assert dialog.updated_drive_id == drive["id"] and "「ドライブの追加 / 更新」から" in dialog._status.text()
+    for widget in (dialog._table, dialog._target, dialog._name, dialog._source, dialog._refresh_button, dialog._folder_button, dialog._start_button):
+        assert not widget.isEnabled()
+    assert dialog._close_button.isEnabled() and dialog._close_button.text() == "閉じる"
+    dialog.deleteLater()
+
+    # 「ドライブの追加 / 更新」から開いたときは、続けて他のドライブを選べる
+    dialog = ScanDialog(catalog, window.app_settings, window)
+    dialog._set_root(str(folder))
+    dialog._target.setCurrentIndex(dialog._target.findData(drive["id"]))
+    dialog._source.setCurrentIndex(dialog._source.findData(scanner.SOURCE_WALK))
+    dialog._start()
+    assert wait_until(lambda: dialog._worker is None, timeout=20)
+    assert dialog.updated_drive_id == drive["id"] and "「ドライブの追加 / 更新」から" not in dialog._status.text()
+    for widget in (dialog._table, dialog._target, dialog._refresh_button, dialog._folder_button):
+        assert widget.isEnabled()
+    dialog._set_root(str(folder))
+    assert dialog._start_button.isEnabled()
     dialog.deleteLater()
 
     # 同定が一致しないドライブを更新先に選ぶと確認が出る。No なら何もしない
