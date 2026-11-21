@@ -5,14 +5,40 @@
 VirtualDiskMokuroku reads file lists with **Everything** by voidtools and its command line interface **ES (es.exe)**.
 Neither is bundled with this application, so set them up as follows.
 
-> The application also works without Everything. In that case it scans drives directly through the Windows API
-> (slow on large drives).
+> **If you are not sure about any of this, you can use the application as it is, without Everything.** It then
+> scans drives directly through the Windows API (slow on large drives).
 
-## 1. Download
+- If you do not have Everything yet → [1-A](#1-a-if-you-do-not-have-everything-yet)
+- If you already have Everything → [1-B](#1-b-if-you-already-have-everything)
 
-1. Download Everything from <https://www.voidtools.com/downloads/> and install it (or extract the portable version).
-2. On the same page, download **ES** from "Download Everything Command-line Interface" and take `es.exe` out of it.
-   - For Everything 1.5 (alpha), use ES 1.1.0.30 or later, which supports 1.5.
+## 1-A. If you do not have Everything yet
+
+1. Open <https://www.voidtools.com/> and click **"Download Portable ZIP 64-bit"** for version 1.4 (not the Beta) to
+   download `Everything-1.4.1.1032.x64.zip` (the version number changes over time).
+   - If you also want to use Everything outside this application, you can install it with
+     "Download Installer 64-bit" instead.
+2. Open <https://www.voidtools.com/downloads/> (the Downloads page; the top page offers only Everything itself) and
+   download `ES-1.1.0.38.x64.zip` (the version number changes over time) under
+   **"Download Everything Command-line Interface"**.
+3. Extract both ZIP files and put their contents (`Everything.exe`, `Everything.lng` and `es.exe`) in the
+   `everything_portable` folder next to the VirtualDiskMokuroku executable.
+   - The link in Help → "How to set up Everything" in the application opens this folder in Explorer.
+   - If you used the installer, put only `es.exe` there.
+4. When a scan begins and you are asked whether to start Everything, choose "Yes".
+   You are ready when the **Test connection** button under Settings → Application settings shows the versions of
+   es.exe and Everything.
+
+## 1-B. If you already have Everything
+
+The command line interface **ES (es.exe)** is not part of Everything itself, so add it separately.
+
+1. On <https://www.voidtools.com/downloads/>, download `ES-1.1.0.38.x64.zip` (the version number changes over time)
+   under **"Download Everything Command-line Interface"** and extract `es.exe` from it.
+   - For Everything 1.5 (alpha / beta), use ES 1.1.0.30 or later, which supports 1.5.
+2. Put `es.exe` in one of the places listed in [section 3](#3-where-to-put-esexe) (the `everything_portable`
+   folder, the folder of `Everything.exe`, and so on).
+3. Then keep Everything running as described in section 2 and check with **Test connection** in Application
+   settings.
 
 ## 2. Keep Everything running
 

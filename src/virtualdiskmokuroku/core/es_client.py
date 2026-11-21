@@ -79,6 +79,11 @@ def _nearby_dirs() -> tuple[Path, Path]:
     return app_dir, Path.cwd()
 
 
+def portable_dir() -> Path:
+    """利用者が Everything 本体と es.exe を置くフォルダ (アプリのフォルダの下の ``everything_portable\\``)。"""
+    return _nearby_dirs()[0] / "everything_portable"
+
+
 def find_es_exe(configured: str | os.PathLike[str] | None = None) -> Path | None:
     """es.exe を探す。設定値 → PATH → アプリ近傍 → 既定のインストール先の順。"""
     candidates: list[Path] = []

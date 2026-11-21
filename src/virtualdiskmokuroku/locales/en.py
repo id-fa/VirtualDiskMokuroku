@@ -361,13 +361,32 @@ STRINGS: dict[str, str] = {
         "The copy will be written as an unencrypted catalog. Anyone can read its contents. Continue?",
     "復号して書き出す": "Export decrypted copy",
     "Everything の導入方法": "How to set up Everything",
-    "このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。es.exe と同じフォルダに Everything.exe があれば、起動していないときにスキャン開始時に起動を確認します。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。":
-        "This application uses Everything by voidtools to read file lists.\n\n"
-        "1. Get Everything and its command line interface (ES: es.exe) from https://www.voidtools.com/.\n"
-        "2. Keep Everything running (indexing NTFS drives needs administrator rights or the Everything service). If Everything.exe is in the same folder as es.exe and is not running, you are asked to start it when a scan begins.\n"
-        "3. Put es.exe in a folder on PATH or next to Everything, or set its location in Settings → Application settings.\n"
-        "4. Use \"Test connection\" in Application settings to check that it works.\n\n"
-        "Drives that Everything does not index (CD/DVD, FAT/exFAT, etc.), or any drive when Everything is unavailable, are read by direct scan automatically.",
+    "このアプリはファイルリストの取得に voidtools の Everything を利用します。":
+        "This application uses Everything by voidtools to read file lists.",
+    "よくわからない場合は、導入しなくてもそのまま使えます。Everything が無いときは、自動的に直接走査でファイルリストを取得します (大容量のドライブでは時間がかかります)。":
+        "If you are not sure about any of this, you can use the application as it is, without Everything. File lists are then read by direct scan automatically (slow on large drives).",
+    "everything_portable フォルダ": "the everything_portable folder",
+    "これから導入する方": "If you do not have Everything yet",
+    "{site} で、1.4 系 (Beta ではない方) の「Download Portable ZIP 64-bit」を押して、「Everything-1.4.1.1032.x64.zip」(バージョン番号は変わります) をダウンロードします。このアプリ以外でも Everything を使いたい方は、「Download Installer 64-bit」でインストールしても構いません。":
+        "On {site}, click \"Download Portable ZIP 64-bit\" for version 1.4 (not the Beta) to download \"Everything-1.4.1.1032.x64.zip\" (the version number changes over time). If you also want to use Everything outside this application, you can install it with \"Download Installer 64-bit\" instead.",
+    "{downloads} の「Download Everything Command-line Interface」にある「ES-1.1.0.38.x64.zip」(バージョン番号は変わります) をダウンロードします (トップページには本体しか置かれていません)。":
+        "On {downloads}, download \"ES-1.1.0.38.x64.zip\" (the version number changes over time) under \"Download Everything Command-line Interface\" (the top page offers only Everything itself).",
+    "ZIP を展開して出てきたファイル (Everything.exe、Everything.lng、es.exe) を {folder} に置きます。インストーラー版を導入した方は es.exe だけを置きます。":
+        "Extract the ZIP files and put their contents (Everything.exe, Everything.lng and es.exe) in {folder}. If you used the installer, put only es.exe there.",
+    "スキャンを始めるときに Everything を起動するか確認されたら、「はい」を選びます。":
+        "When a scan begins and you are asked whether to start Everything, choose \"Yes\".",
+    "既に Everything を導入している方": "If you already have Everything",
+    "コマンドライン版 (ES: es.exe) を追加します。{downloads} の「Download Everything Command-line Interface」にある「ES-1.1.0.38.x64.zip」(バージョン番号は変わります) をダウンロードし、展開して es.exe を取り出します。":
+        "Add the command line interface (ES: es.exe). On {downloads}, download \"ES-1.1.0.38.x64.zip\" (the version number changes over time) under \"Download Everything Command-line Interface\" and extract es.exe from it.",
+    "es.exe を {folder}、Everything.exe と同じフォルダ、PATH の通った場所のいずれかに置きます。ほかの場所に置いたときは「設定」→「アプリ設定」で場所を指定します。":
+        "Put es.exe in {folder}, in the folder of Everything.exe, or in a folder on PATH. If you put it anywhere else, set its location in Settings → Application settings.",
+    "Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。es.exe と同じフォルダに Everything.exe があれば、起動していないときにスキャン開始時に起動を確認します。":
+        "Keep Everything running (indexing NTFS drives needs administrator rights or the Everything service). If Everything.exe is in the same folder as es.exe and is not running, you are asked to start it when a scan begins.",
+    "どちらの場合も、「設定」→「アプリ設定」の「接続テスト」で動作を確認できます。":
+        "Either way, use \"Test connection\" in Settings → Application settings to check that it works.",
+    "Everything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) は、自動的に直接走査でファイルリストを取得します。":
+        "Drives that Everything does not index (CD/DVD, FAT/exFAT, etc.) are read by direct scan automatically.",
+    "フォルダを作成できませんでした。\n\n{error}": "Could not create the folder.\n\n{error}",
     "範囲:": "Scope:",
     "詳細(&D)": "&Details",
     "サムネイル (敷き詰め)(&T)": "&Tiles",

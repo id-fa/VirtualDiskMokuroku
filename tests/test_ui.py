@@ -258,16 +258,35 @@ def test_cancel_during_context_registers_partial_results(window, tmp_path):
     window._after_catalog_changed(drive["id"])
 
 
-def test_everything_help_has_clickable_link(window):
+def test_everything_help_has_clickable_links(window, tmp_path, monkeypatch):
+    from PySide6.QtCore import QUrl
+    from PySide6.QtGui import QDesktopServices
     from PySide6.QtWidgets import QMessageBox
 
+    folder = tmp_path / "app" / "everything_portable"
+    monkeypatch.setattr("virtualdiskmokuroku.ui.main_window.portable_dir", lambda: folder)
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(QUrl(url)) or True)
+
     box = window.everything_help_box()
+    text = box.text()
     assert box.textFormat() == Qt.TextFormat.RichText and box.icon() == QMessageBox.Icon.Information
-    assert '<a href="https://www.voidtools.com/">https://www.voidtools.com/</a>' in box.text()
-    assert "<br>" in box.text() and "\n" not in box.text()
-    assert "&lt;" not in box.text() and "→" in box.text()  # 通常の文字はエスケープで壊れない
+    assert '<a href="https://www.voidtools.com/">https://www.voidtools.com/</a>' in text
+    assert text.count('<a href="https://www.voidtools.com/downloads/">') == 2  # ES は downloads ページにだけある
+    assert "これから導入する方" in text and "既に Everything を導入している方" in text
+    assert "導入しなくてもそのまま使えます" in text
+    assert "Download Portable ZIP 64-bit" in text and "ES-1.1.0.38.x64.zip" in text
+    assert "&lt;" not in text and "{" not in text and "→" in text  # エスケープや差し込みで壊れない
+    folder_url = QUrl.fromLocalFile(str(folder))
+    assert text.count(f'<a href="{folder_url.toString()}">everything_portable フォルダ</a>') == 2
+
+    # リンクは自分で開く。フォルダは無ければ作ってからエクスプローラーで開く
     label = box.findChild(QLabel, "qt_msgbox_label")
-    assert label is not None and label.openExternalLinks()  # クリックで既定のブラウザが開く
+    assert label is not None and not label.openExternalLinks()
+    label.linkActivated.emit("https://www.voidtools.com/downloads/")
+    assert opened == [QUrl("https://www.voidtools.com/downloads/")] and not folder.exists()
+    label.linkActivated.emit(folder_url.toString())
+    assert folder.is_dir() and opened[-1] == folder_url
     box.deleteLater()
 
 

@@ -10,11 +10,12 @@ import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
-from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSettings, Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QItemSelectionModel, QModelIndex, QSettings, Qt, QThread, QTimer, QUrl, Signal
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
     QCloseEvent,
+    QDesktopServices,
     QDragEnterEvent,
     QDragMoveEvent,
     QDropEvent,
@@ -54,6 +55,7 @@ from ..core import export
 from ..core.catalog import CATALOG_EXTENSION, CONTEXT_DB, LEGACY_CATALOG_EXTENSIONS, Catalog
 from ..core.drive_db import ROOT_ID, DriveDB, split_terms
 from ..core.errors import CatalogError, PasswordError
+from ..core.es_client import portable_dir
 from ..core.formatting import format_bytes, format_filetime, format_iso, format_size
 from ..core.search import SCOPE_ALL, SCOPE_FOLDER, SCOPE_SUBTREE, DbPool, DriveRef, QuerySpec, Row, iter_rows
 from ..core.settings import AppSettings
@@ -91,7 +93,8 @@ _SOURCE_NAMES = {
     "vcdcase": "Virtual CD-ROM Case からインポート",
     "stencil": "メディアステンシルからインポート",
 }
-_EVERYTHING_URL = "https://www.voidtools.com/"  # ヘルプの文言に含まれる URL (リンクにする)
+_EVERYTHING_URL = "https://www.voidtools.com/"  # ヘルプからリンクする。トップページには Everything 本体しか無い
+_EVERYTHING_DOWNLOADS_URL = "https://www.voidtools.com/downloads/"  # コマンドライン版 (ES) はこちらにだけある
 _FILTER_DELAY_MS = 180
 
 ROLE_DRIVE = Qt.ItemDataRole.UserRole + 1
@@ -1643,13 +1646,61 @@ class MainWindow(QMainWindow):
             self._run_query()
 
     def everything_help_box(self) -> QMessageBox:
-        """「Everything の導入方法」のメッセージボックス。URL はクリックで既定のブラウザが開く。"""
-        text = tr('このアプリはファイルリストの取得に voidtools の Everything を利用します。\n\n1. https://www.voidtools.com/ から Everything 本体と、コマンドライン版 (ES: es.exe) を入手します。\n2. Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。es.exe と同じフォルダに Everything.exe があれば、起動していないときにスキャン開始時に起動を確認します。\n3. es.exe を PATH の通った場所か Everything と同じフォルダに置くか、「設定」→「アプリ設定」で場所を指定します。\n4. 「アプリ設定」の「接続テスト」で動作を確認できます。\n\nEverything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) や Everything が使えない場合は、自動的に直接走査でファイルリストを取得します。')  # fmt: skip
-        body = html.escape(text).replace("\n", "<br>")
-        body = body.replace(_EVERYTHING_URL, f'<a href="{_EVERYTHING_URL}">{_EVERYTHING_URL}</a>')
+        """「Everything の導入方法」のメッセージボックス。
+
+        URL はクリックで既定のブラウザが、``everything_portable`` フォルダへのリンクはエクスプローラーが開く。
+        """
+        folder_url = QUrl.fromLocalFile(str(portable_dir())).toString()
+        links = {
+            "site": f'<a href="{_EVERYTHING_URL}">{_EVERYTHING_URL}</a>',
+            "downloads": f'<a href="{_EVERYTHING_DOWNLOADS_URL}">{_EVERYTHING_DOWNLOADS_URL}</a>',
+            "folder": f'<a href="{html.escape(folder_url)}">{html.escape(tr("everything_portable フォルダ"))}</a>',
+        }
+
+        def para(text: str) -> str:
+            # 文言はエスケープしてから、リンクの HTML を差し込む
+            return html.escape(text, quote=False).format(**links)
+
+        def section(title: str, steps: list[str]) -> str:
+            items = "".join(f"<li>{para(step)}</li>" for step in steps)
+            return f"<p><b>{para(title)}</b></p><ol>{items}</ol>"
+
+        body = "".join([
+            f"<p>{para(tr('このアプリはファイルリストの取得に voidtools の Everything を利用します。'))}</p>",
+            f"<p>{para(tr('よくわからない場合は、導入しなくてもそのまま使えます。Everything が無いときは、自動的に直接走査でファイルリストを取得します (大容量のドライブでは時間がかかります)。'))}</p>",
+            section(tr('これから導入する方'), [
+                tr('{site} で、1.4 系 (Beta ではない方) の「Download Portable ZIP 64-bit」を押して、「Everything-1.4.1.1032.x64.zip」(バージョン番号は変わります) をダウンロードします。このアプリ以外でも Everything を使いたい方は、「Download Installer 64-bit」でインストールしても構いません。'),
+                tr('{downloads} の「Download Everything Command-line Interface」にある「ES-1.1.0.38.x64.zip」(バージョン番号は変わります) をダウンロードします (トップページには本体しか置かれていません)。'),
+                tr('ZIP を展開して出てきたファイル (Everything.exe、Everything.lng、es.exe) を {folder} に置きます。インストーラー版を導入した方は es.exe だけを置きます。'),
+                tr('スキャンを始めるときに Everything を起動するか確認されたら、「はい」を選びます。'),
+            ]),
+            section(tr('既に Everything を導入している方'), [
+                tr('コマンドライン版 (ES: es.exe) を追加します。{downloads} の「Download Everything Command-line Interface」にある「ES-1.1.0.38.x64.zip」(バージョン番号は変わります) をダウンロードし、展開して es.exe を取り出します。'),
+                tr('es.exe を {folder}、Everything.exe と同じフォルダ、PATH の通った場所のいずれかに置きます。ほかの場所に置いたときは「設定」→「アプリ設定」で場所を指定します。'),
+                tr('Everything を起動したままにします (NTFS ドライブのインデックス作成には管理者権限、または Everything サービスが必要です)。es.exe と同じフォルダに Everything.exe があれば、起動していないときにスキャン開始時に起動を確認します。'),
+            ]),
+            f"<p>{para(tr('どちらの場合も、「設定」→「アプリ設定」の「接続テスト」で動作を確認できます。'))}</p>",
+            f"<p>{para(tr('Everything のインデックス対象外のドライブ (CD/DVD、FAT/exFAT など) は、自動的に直接走査でファイルリストを取得します。'))}</p>",
+        ])  # fmt: skip
         box = QMessageBox(QMessageBox.Icon.Information, tr('Everything の導入方法'), body, QMessageBox.StandardButton.Ok, self)
-        box.setTextFormat(Qt.TextFormat.RichText)  # リンクを有効にする (QMessageBox はリンクを外部ブラウザで開く)
+        box.setTextFormat(Qt.TextFormat.RichText)  # リンクを有効にする
+        label = box.findChild(QLabel, "qt_msgbox_label")
+        if label is not None:
+            # フォルダは無ければ作ってから開きたいので、QMessageBox 任せにせず自分で開く
+            label.setOpenExternalLinks(False)
+            label.linkActivated.connect(self._open_help_link)
         return box
+
+    def _open_help_link(self, link: str) -> None:
+        """ヘルプのリンクを開く。フォルダへのリンクは、無ければ作ってからエクスプローラーで開く。"""
+        url = QUrl(link)
+        if url.isLocalFile():
+            try:
+                Path(url.toLocalFile()).mkdir(parents=True, exist_ok=True)
+            except OSError as error:
+                QMessageBox.warning(self, APP_NAME, tr('フォルダを作成できませんでした。\n\n{error}').format(error=error))
+                return
+        QDesktopServices.openUrl(url)
 
     def show_everything_help(self) -> None:
         self.everything_help_box().exec()
