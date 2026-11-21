@@ -37,6 +37,7 @@ After `pip install -e .`, the `virtualdiskmokuroku` command starts it as well.
 | Folder size totals | "Size" column of folder rows in the list, "Folder total" in the status bar |
 | Free space of a drive | Next to the drive name in the tree and at the right of the status bar (values at scan time) |
 | Incremental filter | Input box above the list. Choose the scope from "This folder / Including subfolders / All drives". Space-separated terms are ANDed |
+| Drive filter | Input box above the tree. Shows only the drives whose name, volume label or group name matches. Space-separated terms are ANDed |
 | Copy names / full paths | Select rows and press Ctrl+C / Ctrl+Shift+C, or right-click |
 | Export the list | Ctrl+E (text or CSV; all rows are written even when the display is truncated at the limit) |
 | Thumbnail view | "View" at the top right of the list (or the View menu) → "Tiles" / "Thumbnails with info". Available for catalogs that store image thumbnails |

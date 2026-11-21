@@ -156,6 +156,13 @@ class MainWindow(QMainWindow):
         self.tree.collapsed.connect(self._on_tree_collapsed)
         self.tree.selectionModel().currentChanged.connect(self._on_tree_current_changed)
         self.tree.customContextMenuRequested.connect(self._show_tree_menu)
+        # ツリーに出すドライブの絞り込み。行を隠すだけで、モデルや一覧側の検索範囲は変えない
+        self.tree_filter_edit = QLineEdit()
+        self.tree_filter_edit.setPlaceholderText(tr('ドライブを絞り込み'))
+        self.tree_filter_edit.setToolTip(tr('ドライブ名・ボリュームラベル・グループ名で絞り込みます (空白区切りで AND 条件)'))
+        self.tree_filter_edit.setClearButtonEnabled(True)
+        self._tree_filter_applying = False
+        self.tree_filter_edit.textChanged.connect(lambda _text: self._apply_tree_filter())
 
         # --- 右: フィルタ + 一覧
         self.filter_edit = QLineEdit()
@@ -237,13 +244,21 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(filter_row)
         right_layout.addWidget(self.view_stack, 1)
 
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 4, 0, 0)
+        left_layout.addWidget(self.tree_filter_edit)
+        left_layout.addWidget(self.tree, 1)
+
         self.splitter = QSplitter()
-        self.splitter.addWidget(self.tree)
+        self.splitter.addWidget(left)
         self.splitter.addWidget(right)
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
         self.splitter.setSizes([300, 900])
         self.setCentralWidget(self.splitter)
+        # 起動直後のフォーカスは今までどおりツリーに置く (絞り込み欄が先だと、一覧のコピーなどのキー操作を欄が受けてしまう)
+        QWidget.setTabOrder(self.tree, self.tree_filter_edit)
         self.setAcceptDrops(True)  # カタログファイルのドロップで開く
 
         # --- プロパティ
@@ -458,7 +473,7 @@ class MainWindow(QMainWindow):
         ):  # fmt: skip
             item.setEnabled(has_drive)
         self.restore_menu.setEnabled(has_drive)
-        for widget in (self.filter_edit, self.scope_combo, self.address):
+        for widget in (self.filter_edit, self.scope_combo, self.address, self.tree_filter_edit):
             widget.setEnabled(has_catalog)
         has_context = has_catalog and any(drive.get("has_context") for drive in self.catalog.drives)  # type: ignore[union-attr]
         self.context_check.setEnabled(bool(has_context))
@@ -644,6 +659,9 @@ class MainWindow(QMainWindow):
         self.filter_edit.blockSignals(True)
         self.filter_edit.clear()
         self.filter_edit.blockSignals(False)
+        self.tree_filter_edit.blockSignals(True)  # ツリーはこの後で作り直す
+        self.tree_filter_edit.clear()
+        self.tree_filter_edit.blockSignals(False)
         self.address.clear()
         self.table_model.set_rows([])
         self.properties.show_row(None, None)
@@ -866,7 +884,37 @@ class MainWindow(QMainWindow):
             comments = {drive.get("group_comment") for drive in self.catalog.drives if drive.get("group") == group}
             if len(comments) == 1 and None not in comments:
                 parent.setToolTip(comments.pop())
-            self.tree.setExpanded(parent.index(), group not in self._collapsed_groups)
+        self._apply_tree_filter()  # グループの開閉もここで決める
+
+    def _apply_tree_filter(self) -> None:
+        """絞り込み欄の語をすべて含むドライブだけをツリーに出す (ドライブ名・ボリュームラベル・グループ名が対象)。"""
+        terms = [term.casefold() for term in split_terms(self.tree_filter_edit.text())]
+        drives = {drive["id"]: drive for drive in self.catalog.drives} if self.catalog is not None else {}
+
+        def matches(item: QStandardItem) -> bool:
+            drive = drives.get(item.data(ROLE_DRIVE), {})
+            text = "\n".join(str(drive.get(key) or "") for key in ("name", "label", "group")).casefold()
+            return all(term in text for term in terms)
+
+        root = QModelIndex()
+        self._tree_filter_applying = True
+        try:
+            for row in range(self.tree_model.rowCount()):
+                item = self.tree_model.item(row)
+                group = item.data(ROLE_GROUP)
+                if group is None:
+                    visible = matches(item)
+                else:
+                    visible = False
+                    for child_row in range(item.rowCount()):
+                        shown = matches(item.child(child_row))
+                        self.tree.setRowHidden(child_row, item.index(), not shown)
+                        visible = visible or shown
+                    # 絞り込み中は折りたたんであるグループも開いて見せる (覚えている開閉状態は変えない)
+                    self.tree.setExpanded(item.index(), bool(terms) or group not in self._collapsed_groups)
+                self.tree.setRowHidden(row, root, not visible)
+        finally:
+            self._tree_filter_applying = False
 
     def _load_tree_children(self, item: QStandardItem) -> None:
         if item.data(ROLE_LOADED):
@@ -895,12 +943,13 @@ class MainWindow(QMainWindow):
     def _on_tree_expanded(self, index: QModelIndex) -> None:
         item = self.tree_model.itemFromIndex(index)
         if item is not None:
-            self._collapsed_groups.discard(item.data(ROLE_GROUP))
+            if not self._tree_filter_applying:
+                self._collapsed_groups.discard(item.data(ROLE_GROUP))
             self._load_tree_children(item)
 
     def _on_tree_collapsed(self, index: QModelIndex) -> None:
         item = self.tree_model.itemFromIndex(index)
-        if item is not None and item.data(ROLE_GROUP) is not None:
+        if item is not None and item.data(ROLE_GROUP) is not None and not self._tree_filter_applying:
             self._collapsed_groups.add(item.data(ROLE_GROUP))
 
     def _on_tree_current_changed(self, current: QModelIndex, _previous: QModelIndex) -> None:
@@ -926,6 +975,8 @@ class MainWindow(QMainWindow):
         item = self._drive_item(drive_id)
         if item is None:
             return
+        if self.tree.isRowHidden(item.row(), item.index().parent()):
+            self.tree_filter_edit.clear()  # 絞り込みで隠してあるドライブへ移動したら、絞り込みを解いて見せる
         db = self._db(drive_id)
         chain: list[int] = []
         current = dir_id

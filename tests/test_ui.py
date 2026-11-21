@@ -868,6 +868,65 @@ def test_drive_groups(window, monkeypatch):
     assert window.tree_model.item(0).child(0).data(ROLE_DRIVE) == one
 
 
+def test_tree_drive_filter(window, monkeypatch):
+    from PySide6.QtCore import QModelIndex
+    from PySide6.QtWidgets import QInputDialog
+
+    assert wait_until(lambda: len(names(window)) == 7)
+    one, two = [drive["id"] for drive in window.catalog.drives]
+    root = QModelIndex()
+
+    def hidden():
+        return [window.tree.isRowHidden(row, root) for row in range(window.tree_model.rowCount())]
+
+    # 入力するとすぐに絞り込む (大文字小文字は区別しない・空白区切りで AND)。一覧と現在地は変わらない
+    window.tree_filter_edit.setText("TWO")
+    assert hidden() == [True, False]
+    assert window._location == (one, 0) and len(names(window)) == 7
+    window.tree_filter_edit.setText("ドライブ one")
+    assert hidden() == [False, True]
+    window.tree_filter_edit.setText("ドライブ 無い")
+    assert hidden() == [True, True]
+    window.tree_filter_edit.setText("")
+    assert hidden() == [False, False]
+
+    # 隠してあるドライブへ移動すると、絞り込みを解いて見せる
+    window.tree_filter_edit.setText("one")
+    window.navigate(two, 0)
+    assert window.tree_filter_edit.text() == "" and hidden() == [False, False]
+    assert window.tree_model.itemFromIndex(window.tree.currentIndex()).data(ROLE_DIR) == 0
+
+    # グループの中も絞り込む。折りたたんであるグループは絞り込み中だけ開き、解くと元に戻る
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *args, **kwargs: ("保管", True))
+    window.navigate(one, 0)
+    window.set_current_drive_group()
+    window.navigate(two, 0)
+    window.set_current_drive_group()
+    group_item = window.tree_model.item(0)
+    assert window.tree_model.rowCount() == 1 and group_item.rowCount() == 2
+    window.tree.collapse(group_item.index())
+    window.tree_filter_edit.setText("two")
+    assert hidden() == [False] and window.tree.isExpanded(group_item.index())
+    assert [window.tree.isRowHidden(row, group_item.index()) for row in range(2)] == [True, False]
+    window.tree_filter_edit.setText("無い")
+    assert hidden() == [True]
+    window.tree_filter_edit.setText("保管")  # グループ名に一致すれば中のドライブを全部出す
+    assert hidden() == [False]
+    assert [window.tree.isRowHidden(row, group_item.index()) for row in range(2)] == [False, False]
+    window.tree_filter_edit.setText("")
+    assert not window.tree.isExpanded(group_item.index())
+
+    # ツリーを作り直しても絞り込みは保たれ、カタログを開き直すと消える
+    window.tree_filter_edit.setText("one")
+    window._after_catalog_changed(one)
+    group_item = window.tree_model.item(0)
+    assert [window.tree.isRowHidden(row, group_item.index()) for row in range(2)] == [False, True]
+    path = window.catalog.path
+    assert window.save_catalog()
+    assert window.open_catalog(path)
+    assert window.tree_filter_edit.text() == ""
+
+
 def test_english_ui(app, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QApplication as _QApplication
 

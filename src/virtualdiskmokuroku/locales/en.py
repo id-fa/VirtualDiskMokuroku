@@ -291,6 +291,8 @@ STRINGS: dict[str, str] = {
     "コメントなどの情報を取り込み中… {count:,} 件": "Importing comments and other details… {count:,}",
     # ------------------------------------------------------------------ メインウィンドウ
     "フィルタ (入力するとすぐに絞り込み。空白区切りで AND 条件)": "Filter (applies as you type; space-separated terms are ANDed)",
+    "ドライブを絞り込み": "Filter drives",
+    "ドライブ名・ボリュームラベル・グループ名で絞り込みます (空白区切りで AND 条件)": "Narrows the tree by drive name, volume label or group name (space-separated terms are ANDed)",
     "このフォルダ": "This folder",
     "下位フォルダを含む": "Including subfolders",
     "全ドライブ": "All drives",
