@@ -64,7 +64,7 @@ from .models import COL_DRIVE, COL_LOCATION, COL_MTIME, COL_NAME, COL_SIZE, COL_
 from .organize_dialog import OrganizeDialog
 from .properties_panel import PropertiesPanel
 from .query_worker import QueryWorker
-from .scan_dialog import ScanDialog
+from .scan_dialog import _DRIVE_TYPE_LABELS, ScanDialog
 from .settings_dialogs import AppSettingsDialog, CatalogSettingsDialog, ask_new_password, ask_password
 from .style import apply_selection_style
 from .thumbnail_view import (
@@ -849,6 +849,40 @@ class MainWindow(QMainWindow):
             lines.append(tr('最新の更新日時: {latest_mtime} (ドライブ内で最も新しいファイル)').format(latest_mtime=format_filetime(drive['latest_mtime'])))
         return "\n".join(lines)
 
+    def _drive_properties(self, drive: dict) -> list[tuple[str, str]]:
+        """プロパティ欄に出すドライブ情報 (見出し, 値)。値が無い項目は出さない。"""
+        backups = drive.get("backups", [])
+        context = ""
+        if drive.get("has_context"):
+            context = tr('あり (取得を途中でキャンセル。次回の更新で続きを取得)') if drive.get("context_partial") else tr('あり')
+        group = drive.get("group") or ""
+        if group and drive.get("group_comment"):
+            group += f" ({drive['group_comment']})"
+        total_size = drive.get("total_size")
+        items = [
+            (tr('種類'), tr(_DRIVE_TYPE_LABELS.get(drive.get("drive_type") or "", ""))),
+            (tr('ラベル'), drive.get("label")),
+            (tr('ボリュームのシリアル'), drive.get("serial")),
+            (tr('形式'), drive.get("filesystem")),
+            (tr('容量'), format_size(drive["total_bytes"]) if drive.get("total_bytes") else ""),
+            (tr('空き容量'), tr('{free_bytes} (スキャン時点)').format(free_bytes=format_size(drive.get("free_bytes"))) if drive.get("total_bytes") else ""),
+            (tr('デバイス'), " ".join(part for part in (drive.get("device_vendor"), drive.get("device_model")) if part)),
+            (tr('デバイスのシリアル'), drive.get("device_serial")),
+            (tr('接続'), drive.get("bus_type")),
+            (tr('スキャン時のパス'), drive.get("root")),
+            (tr('内容'), tr('ファイル {0:,} / フォルダ {1:,}').format(drive.get("file_count") or 0, drive.get("dir_count") or 0)),
+            (tr('合計サイズ'), "" if total_size is None else tr('{size} ({size2} バイト)').format(size=format_size(total_size), size2=format_bytes(total_size))),
+            (tr('スキャン日時'), format_iso(drive.get("scanned_at"))),
+            (tr('最新の更新日時'), format_filetime(drive["latest_mtime"]) if drive.get("latest_mtime") is not None else ""),
+            (tr('取得元'), tr(_SOURCE_NAMES.get(drive.get("source") or "walk", _SOURCE_NAMES["walk"]))),
+            (tr('グループ'), group),
+            (tr('コメント'), drive.get("comment")),
+            (tr('分類'), drive.get("category")),
+            (tr('拡張コンテキスト'), context),
+            (tr('バックアップ'), tr('{backups_count} 世代').format(backups_count=len(backups)) if backups else ""),
+        ]  # fmt: skip
+        return [(caption, str(value)) for caption, value in items if value]
+
     def _reload_tree(self) -> None:
         # 作り直しの途中で、消える前の項目が「選択中」として通知されないようにする
         selection = self.tree.selectionModel()
@@ -1173,8 +1207,11 @@ class MainWindow(QMainWindow):
     def _on_selection_changed(self) -> None:
         current = self.table_model.row_at(self.table.currentIndex())
         selected = self.table.selectionModel().isSelected(self.table.currentIndex()) if current else False
+        drive = self._current_drive()
         if current is not None and selected and self.properties_dock.isVisible():
             self.properties.show_row(current, self._context_db(current.drive_id))
+        elif drive is not None:
+            self.properties.show_drive(drive["name"], self._drive_properties(drive))
         else:
             self.properties.show_row(None, None)
         self._update_status()
@@ -1459,6 +1496,7 @@ class MainWindow(QMainWindow):
             self.address.clear()
             self._spec = None
             self.table_model.set_rows([])
+            self.properties.show_row(None, None)
             self._update_status()
         self._update_ui_state()
 

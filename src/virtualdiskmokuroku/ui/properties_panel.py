@@ -79,7 +79,10 @@ class PropertiesPanel(QScrollArea):
         self._title.setFont(font)
         layout.addWidget(self._title)
 
-        form = QFormLayout()
+        # 選択中のファイル / フォルダの項目。何も選択していないときは隠して、代わりにドライブの項目を出す
+        self._entry_box = QWidget()
+        form = QFormLayout(self._entry_box)
+        form.setContentsMargins(0, 0, 0, 0)
         self._fields: dict[str, QLabel] = {}
         for key, caption in (
             ("location", tr('場所')), ("type", tr('種類')), ("size", tr('サイズ')), ("contents", tr('内容')),
@@ -88,7 +91,12 @@ class PropertiesPanel(QScrollArea):
             label = _selectable()
             self._fields[key] = label
             form.addRow(caption + ":", label)
-        layout.addLayout(form)
+        layout.addWidget(self._entry_box)
+
+        self._drive_box = QWidget()
+        self._drive_form = QFormLayout(self._drive_box)
+        self._drive_form.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._drive_box)
 
         self._thumb = QLabel()
         self._thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -137,6 +145,9 @@ class PropertiesPanel(QScrollArea):
         self._row = row
         for widget in (self._thumb, self._meta_caption, self._meta, self._text_box, self._inner_caption, self._inner):
             widget.setVisible(False)
+        self._drive_box.setVisible(False)
+        self._drive_items: list[tuple[str, str]] = []
+        self._entry_box.setVisible(row is not None)
         if row is None:
             self._title.setText(tr('(選択なし)'))
             for label in self._fields.values():
@@ -159,6 +170,21 @@ class PropertiesPanel(QScrollArea):
         if context_db is None:
             return
         self._show_context(entry.id, context_db)
+
+    def show_drive(self, title: str, items: list[tuple[str, str]]) -> None:
+        """何も選択していないときに、表示中のドライブの情報を出す。``items`` は (見出し, 値) の並び。"""
+        self.show_row(None, None)
+        self._title.setText(title)
+        self._drive_items = list(items)
+        while self._drive_form.rowCount():
+            self._drive_form.removeRow(0)
+        for caption, value in items:
+            self._drive_form.addRow(caption + ":", _selectable(value))
+        self._drive_box.setVisible(True)
+
+    def drive_items(self) -> list[tuple[str, str]]:
+        """表示中のドライブ情報 (見出し, 値)。ドライブ情報を出していないときは空。"""
+        return list(self._drive_items)
 
     def _show_context(self, entry_id: int, context_db) -> None:
         thumb = context_db.get_thumb(entry_id)

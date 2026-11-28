@@ -14,6 +14,7 @@ from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from virtualdiskmokuroku.core import scanner  # noqa: E402
 from virtualdiskmokuroku.core.catalog import Catalog  # noqa: E402
+from virtualdiskmokuroku.core.drive_db import ROOT_ID  # noqa: E402
 from virtualdiskmokuroku.core.ignore import DEFAULT_IGNORE, IgnoreRules  # noqa: E402
 from virtualdiskmokuroku.core.search import SCOPE_ALL, SCOPE_FOLDER, SCOPE_SUBTREE  # noqa: E402
 from virtualdiskmokuroku.core.settings import AppSettings  # noqa: E402
@@ -71,6 +72,33 @@ def names(window):
 
 def wait_names(window, expected):
     assert wait_until(lambda: names(window) == expected), names(window)
+
+
+def test_properties_show_drive_when_nothing_selected(window):
+    wait_names(window, ["docs", "docs.old", "empty", "music", "a.txt", "only_in_one.txt", "Zeta.bin"])
+    panel = window.properties
+    drive = window.catalog.drives[0]
+    drive.update(device_vendor="WD", device_model="My Passport 260D", device_serial="WX0000", bus_type="USB")
+
+    # 何も選択していない → 表示中のドライブの情報
+    window._on_selection_changed()
+    items = dict(panel.drive_items())
+    assert panel._title.text() == "ドライブone" and not panel._entry_box.isVisible()
+    assert items["デバイス"] == "WD My Passport 260D" and items["デバイスのシリアル"] == "WX0000" and items["接続"] == "USB"
+    assert items["内容"] == "ファイル 8 / フォルダ 5" and items["取得元"] == "直接走査"
+    assert "コメント" not in items  # 値の無い項目は出さない
+
+    # 選択するとそのエントリの情報、解除するとドライブの情報に戻る
+    window.table.selectRow(4)
+    assert panel._title.text() == "a.txt" and panel._entry_box.isVisible() and panel.drive_items() == []
+    window.table.clearSelection()
+    assert panel._title.text() == "ドライブone" and panel.drive_items()
+
+    # 別のドライブへ移ると、そのドライブの情報になる
+    window.catalog.drives[1].update(device_vendor="", device_model="")
+    window.navigate(window.catalog.drives[1]["id"], ROOT_ID)
+    assert wait_until(lambda: panel._title.text() == "ドライブtwo")
+    assert "デバイス" not in dict(panel.drive_items())
 
 
 def test_browse_filter_search_export(window, tmp_path):
